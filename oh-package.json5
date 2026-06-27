@@ -1,0 +1,13 @@
+{
+  "modelVersion": "6.1.1",
+  "name": "fishpi",
+  "version": "1.0.0",
+  "description": "摸鱼派鸿蒙客户端",
+  "main": "",
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hypium": "1.0.6"
+  }
+}

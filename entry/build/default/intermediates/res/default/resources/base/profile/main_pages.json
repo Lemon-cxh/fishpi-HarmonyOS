@@ -1,0 +1,18 @@
+{
+  "src": [
+    "pages/LoginPage",
+    "pages/RegisterPage",
+    "pages/MainPage",
+    "pages/ChatRoomPage",
+    "pages/ArticleListPage",
+    "pages/ArticleDetailPage",
+    "pages/PrivateChatListPage",
+    "pages/PrivateChatDetailPage",
+    "pages/ProfilePage",
+    "pages/NotificationPage",
+    "pages/BreezemoonPage",
+    "pages/UserDetailPage",
+    "pages/SettingsPage",
+    "pages/TransferPage"
+  ]
+}
