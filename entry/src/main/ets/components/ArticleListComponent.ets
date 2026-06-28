@@ -153,7 +153,6 @@ export struct ArticleListComponent {
       }
       .width('100%')
       .backgroundColor('#FFFFFF')
-      .border({ width: { bottom: 0.5 }, color: '#E8E8E8' })
 
       // 文章列表
       List() {

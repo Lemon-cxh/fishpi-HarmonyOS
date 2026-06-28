@@ -6,6 +6,7 @@ import { PrivateChatSession, PrivateChatListResponse } from '../model/Notificati
 import { UserInfo, UserInfoResponse } from '../model/User';
 import { ChatRoomComponent } from '../components/ChatRoomComponent';
 import { ArticleListComponent } from '../components/ArticleListComponent';
+import { HdsTabs, HdsTabsController, hdsMaterial, HdsBarStyle, HdsNavigation, HdsNavigationTitleMode, ScrollEffectType } from '@kit.UIDesignKit';
 
 /**
  * Tab项接口
@@ -29,6 +30,12 @@ struct MainPage {
   // 状态栏和导航栏高度（用于避让）
   @StorageProp('topRectHeight') topRectHeight: number = 0;
   @StorageProp('bottomRectHeight') bottomRectHeight: number = 0;
+
+  // HdsTabs 控制器
+  private hdsTabsController: HdsTabsController = new HdsTabsController();
+  
+  // 滚动控制器（用于标题栏滚动效果）
+  private scroller: Scroller = new Scroller();
 
   // Tab配置
   private tabItems: TabItem[] = [
@@ -102,67 +109,102 @@ struct MainPage {
   }
 
   build() {
-    Column() {
-      // 内容区域
-      Stack() {
-        // 聊天室页面
-        ChatRoomComponent()
-          .visibility(this.currentIndex === 0 ? Visibility.Visible : Visibility.None)
-
-        // 文章页面
-        ArticleListComponent({ showTitle: true })
-          .visibility(this.currentIndex === 1 ? Visibility.Visible : Visibility.None)
-
-        // 私聊页面
-        Column() {
-          this.PrivateChatContent()
-        }
-        .visibility(this.currentIndex === 2 ? Visibility.Visible : Visibility.None)
-        .layoutWeight(1)
-        .width('100%')
-
-        // 我的页面
-        Column() {
-          this.ProfileContent()
-        }
-        .visibility(this.currentIndex === 3 ? Visibility.Visible : Visibility.None)
-        .layoutWeight(1)
-        .width('100%')
-      }
-      .layoutWeight(1)
-      .width('100%')
-
-      // 底部Tab栏
-      Row() {
-        ForEach(this.tabItems, (item: TabItem, index: number) => {
-          Column() {
-            Text(item.icon)
-              .fontSize(24)
-              .margin({ bottom: 4 })
-
-            Text(item.title)
-              .fontSize(12)
-              .fontColor(this.currentIndex === index ? '#1890FF' : '#999999')
-          }
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
-          .onClick(() => {
-            this.currentIndex = index;
+    // 使用 HdsNavigation 包裹整个应用，提供沉浸光感标题栏
+    HdsNavigation() {
+      // 沉浸式迷你栏底部导航
+      HdsTabs({ controller: this.hdsTabsController }) {
+        // 聊天室
+        TabContent() {
+          ChatRoomComponent({ 
+            bottomPadding: 56 + (this.bottomRectHeight > 0 ? this.getUIContext().px2vp(this.bottomRectHeight) : 0)
           })
-        }, (item: TabItem, index: number) => `${item.title}_${index}`)
+        }
+        .tabBar(this.TabBarBuilder(0))
+
+        // 文章
+        TabContent() {
+          ArticleListComponent({ showTitle: false })
+        }
+        .tabBar(this.TabBarBuilder(1))
+
+        // 私聊
+        TabContent() {
+          Column() {
+            this.PrivateChatContent()
+          }
+          .width('100%')
+          .height('100%')
+        }
+        .tabBar(this.TabBarBuilder(2))
+
+        // 我的
+        TabContent() {
+          Column() {
+            this.ProfileContent()
+          }
+          .width('100%')
+          .height('100%')
+        }
+        .tabBar(this.TabBarBuilder(3))
       }
+      .barOverlap(true) // 页签栏悬浮于内容之上
+      .vertical(false) // 水平排列
+      .barPosition(BarPosition.End) // 页签栏置于容器底部
+      .barFloatingStyle({
+        barBottomMargin: this.bottomRectHeight > 0 ? this.getUIContext().px2vp(this.bottomRectHeight) : 28,
+        barOpacity: 0.85, // 页签栏透明度，1表示不透明，0表示完全透明
+        gradientMask: {
+          maskHeight: 80, // 渐变遮罩高度
+          maskColor: '#40F5F5F5' // 渐变遮罩颜色，带透明度
+        },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.IMMERSIVE, // 沉浸材质
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE // 自适应级别，系统根据设备性能自动选择
+        }
+      })
+      .onTabBarClick((index: number) => {
+        this.currentIndex = index;
+      })
       .width('100%')
-      .height(60)
-      .backgroundColor('#FFFFFF')
-      .border({ width: { top: 0.5 }, color: '#E8E8E8' })
+      .height('100%')
+      .padding({ top: this.topRectHeight > 0 ? this.getUIContext().px2vp(this.topRectHeight) : 0 })
     }
+    .titleBar({
+      style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
+        },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        }
+      }
+    })
+    .hideBackButton(true)
+    .hideTitleBar(true)
     .width('100%')
     .height('100%')
     .backgroundColor('#F5F5F5')
-    .padding({
-      top: this.getUIContext().px2vp(this.topRectHeight),
-      bottom: this.getUIContext().px2vp(this.bottomRectHeight)
-    })
+  }
+
+  /**
+   * TabBar 构建器
+   */
+  @Builder
+  TabBarBuilder(index: number) {
+    Column() {
+      Text(this.tabItems[index].icon)
+        .fontSize(24)
+        .margin({ bottom: 4 })
+
+      Text(this.tabItems[index].title)
+        .fontSize(12)
+        .fontColor(this.currentIndex === index ? '#1890FF' : '#000000')
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
   }
 
   /**
@@ -171,18 +213,6 @@ struct MainPage {
   @Builder
   PrivateChatContent() {
     Column() {
-      Row() {
-        Text('私聊')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#333333')
-        Blank()
-      }
-      .width('100%')
-      .height(56)
-      .padding({ left: 16, right: 16 })
-      .backgroundColor('#FFFFFF')
-
       List() {
         ForEach(this.sessions, (session: PrivateChatSession) => {
           ListItem() {
@@ -226,28 +256,6 @@ struct MainPage {
   @Builder
   ProfileContent() {
     Column() {
-      Row() {
-        Text('我的')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#333333')
-        Blank()
-        Text('设置')
-          .fontSize(14)
-          .fontColor('#1890FF')
-          .onClick(() => {
-            try {
-              this.getUIContext().getRouter().pushUrl({ url: 'pages/SettingsPage' });
-            } catch (err) {
-              // 路由跳转失败
-            }
-          })
-      }
-      .width('100%')
-      .height(56)
-      .padding({ left: 16, right: 16 })
-      .backgroundColor('#FFFFFF')
-
       List() {
         ListItem() {
           Row() {
@@ -293,6 +301,13 @@ struct MainPage {
             this.ProfileMenuItem('💰', '积分转账', () => {
               try {
                 this.getUIContext().getRouter().pushUrl({ url: 'pages/TransferPage' });
+              } catch (err) {
+                // 路由跳转失败
+              }
+            })
+            this.ProfileMenuItem('⚙️', '设置', () => {
+              try {
+                this.getUIContext().getRouter().pushUrl({ url: 'pages/SettingsPage' });
               } catch (err) {
                 // 路由跳转失败
               }

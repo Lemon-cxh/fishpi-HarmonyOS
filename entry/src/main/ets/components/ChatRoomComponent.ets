@@ -24,6 +24,9 @@ export struct ChatRoomComponent {
   @State hasMoreMessages: boolean = true; // 是否还有更多历史消息
   @State showScrollToBottom: boolean = false; // 是否显示"回到最新消息"按钮
 
+  // 底部避让高度（Tab栏高度）
+  @Prop bottomPadding: number = 0;
+
   private scroller: Scroller = new Scroller();
   private wsManager: ChatRoomWebSocket = ChatRoomWebSocket.getInstance();
   private lastLoadTime: number = 0; // 上次加载时间，用于防抖
@@ -239,38 +242,32 @@ export struct ChatRoomComponent {
 
   build() {
     Column() {
-      // 顶部栏
-      Row() {
-        Column() {
-          Text('聊天室')
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#333333')
-
+      // 在线人数和话题标签（悬浮信息条）
+      if (this.onlineCount > 0 || this.discuss) {
+        Row() {
           if (this.onlineCount > 0) {
             Text(`${this.onlineCount}人在线`)
               .fontSize(12)
               .fontColor('#999999')
-              .margin({ top: 2 })
+          }
+
+          Blank()
+
+          if (this.discuss) {
+            Text(`#${this.discuss}#`)
+              .fontSize(12)
+              .fontColor('#1890FF')
+              .backgroundColor('#E6F7FF')
+              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+              .borderRadius(4)
           }
         }
-        .alignItems(HorizontalAlign.Start)
-
-        Blank()
-
-        if (this.discuss) {
-          Text(`#${this.discuss}#`)
-            .fontSize(14)
-            .fontColor('#1890FF')
-            .backgroundColor('#E6F7FF')
-            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .borderRadius(4)
-        }
+        .width('100%')
+        .height(32)
+        .padding({ left: 16, right: 16 })
+        .backgroundColor('#FFFFFF')
+        .border({ width: { bottom: 0.5 }, color: '#E8E8E8' })
       }
-      .width('100%')
-      .height(56)
-      .padding({ left: 16, right: 16 })
-      .backgroundColor('#FFFFFF')
 
       // 消息列表
       if (this.messageGroups.length === 0) {
@@ -373,12 +370,6 @@ export struct ChatRoomComponent {
             .height(32)
             .backgroundColor('#FFFFFF')
             .borderRadius(16)
-            .shadow({
-              radius: 8,
-              color: 'rgba(0, 0, 0, 0.1)',
-              offsetX: 0,
-              offsetY: 2
-            })
             .padding({ left: 12, right: 12 })
             .margin({ right: 16, bottom: 16 })
             .onClick(() => {
@@ -413,9 +404,8 @@ export struct ChatRoomComponent {
           })
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+      .padding({ left: 16, right: 16, top: 8, bottom: 8 + this.bottomPadding })
       .backgroundColor('#FFFFFF')
-      .border({ width: { top: 0.5 }, color: '#E8E8E8' })
     }
     .width('100%')
     .height('100%')

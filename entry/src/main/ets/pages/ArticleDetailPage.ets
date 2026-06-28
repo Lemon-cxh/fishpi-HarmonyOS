@@ -157,8 +157,6 @@ struct ArticleDetailPage {
 
     try {
       const response = await HttpUtil.get<ArticleDetailResponse>(`/api/article/${this.articleId}`);
-      
-      hilog.info(0x0000, 'ArticleDetail', `Response code: ${response.code}`);
 
       if (response.code === 0 && response.data) {
         const data = response.data;
@@ -172,7 +170,6 @@ struct ArticleDetailPage {
         // 只有当 articleOriginalContent 存在且不为空时才使用 Markdown，否则使用 HTML（性能更好）
         this.useMarkdown = !!(this.article?.articleOriginalContent && this.article.articleOriginalContent.trim().length > 0);
         
-        hilog.info(0x0000, 'ArticleDetail', `Article loaded: ${this.article?.articleTitle}, useMarkdown: ${this.useMarkdown}`);
       }
     } catch (err) {
       hilog.error(0x0000, 'ArticleDetail', `Error: ${JSON.stringify(err)}`);
@@ -345,33 +342,6 @@ struct ArticleDetailPage {
 
   build() {
     Column() {
-      // 顶部导航栏
-      Row() {
-        Text('返回')
-          .fontSize(16)
-          .fontColor('#1890FF')
-          .onClick(() => {
-            try {
-              this.getUIContext().getRouter().back();
-            } catch (err) {
-              // 路由返回失败
-            }
-          })
-
-        Text('文章详情')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#333333')
-          .margin({ left: 16 })
-
-        Blank()
-      }
-      .width('100%')
-      .height(56)
-      .padding({ left: 16, right: 16 })
-      .backgroundColor('#FFFFFF')
-      .border({ width: { bottom: 0.5 }, color: '#E8E8E8' })
-
       if (this.isLoading) {
         Column() {
           LoadingProgress()
@@ -695,6 +665,8 @@ struct ArticleDetailPage {
 
       // 评论操作
       Row() {
+        Blank()
+
         // 点赞
         Row() {
           Text('👍')
@@ -740,6 +712,7 @@ struct ArticleDetailPage {
           .fontColor('#1890FF')
           .margin({ left: 20 })
       }
+      .width('100%')
       .margin({ top: 10 })
 
       // 回复预览列表
