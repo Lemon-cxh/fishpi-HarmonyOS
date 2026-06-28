@@ -165,6 +165,8 @@ struct ArticleDetailPage {
         
         // 调试日志：打印原始数据中的头像字段
         hilog.info(0x0000, 'ArticleDetail', `Avatar fields: thumbnailURL48=${data.articleAuthorThumbnailURL48}, thumbnailURL210=${data.articleAuthorThumbnailURL210}, avatarURL=${data.articleAuthorAvatarURL}`);
+        hilog.info(0x0000, 'ArticleDetail', `articleAuthor object: ${JSON.stringify(data.articleAuthor)}`);
+        hilog.info(0x0000, 'ArticleDetail', `All keys in data: ${Object.keys(data).join(', ')}`);
         
         // 处理可能的嵌套结构
         if (data.oId) {
@@ -179,8 +181,10 @@ struct ArticleDetailPage {
             articleAuthorId: data.articleAuthorId || '',
             articleAuthorName: data.articleAuthorName || '',
             // 优先使用 articleAuthorThumbnailURL48，兼容旧字段
+            // 也可以从 articleAuthor.userAvatarURL 获取
             articleAuthorAvatarURL: data.articleAuthorThumbnailURL48 || 
                                     data.articleAuthorThumbnailURL210 || 
+                                    data.articleAuthor?.userAvatarURL ||
                                     data.articleAuthorAvatarURL || '',
             articleCreateTime: data.articleCreateTime || '',
             articleUpdateTime: data.articleUpdateTime || '',

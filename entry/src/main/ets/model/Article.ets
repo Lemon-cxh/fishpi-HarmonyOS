@@ -48,6 +48,17 @@ export interface ArticleListResponse {
 }
 
 /**
+ * 文章作者信息
+ */
+export interface ArticleAuthor {
+  oId?: string;
+  userName?: string;
+  userAvatarURL?: string;
+  userThumbnailURL48?: string;
+  userThumbnailURL210?: string;
+}
+
+/**
  * 文章详情数据（可能嵌套）
  */
 export interface ArticleDetailData {
@@ -62,6 +73,7 @@ export interface ArticleDetailData {
   articleAuthorAvatarURL?: string;
   articleAuthorThumbnailURL48?: string;   // 作者头像48px
   articleAuthorThumbnailURL210?: string;   // 作者头像210px
+  articleAuthor?: ArticleAuthor;           // 作者信息对象
   articleCreateTime?: string;
   articleUpdateTime?: string;
   articleViewCount?: number;
