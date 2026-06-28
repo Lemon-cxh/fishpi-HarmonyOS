@@ -163,10 +163,7 @@ struct ArticleDetailPage {
       if (response.code === 0 && response.data) {
         const data = response.data;
         
-        // 调试日志：打印原始数据中的头像字段
-        hilog.info(0x0000, 'ArticleDetail', `Avatar fields: thumbnailURL48=${data.articleAuthorThumbnailURL48}, thumbnailURL210=${data.articleAuthorThumbnailURL210}, avatarURL=${data.articleAuthorAvatarURL}`);
-        hilog.info(0x0000, 'ArticleDetail', `articleAuthor object: ${JSON.stringify(data.articleAuthor)}`);
-        hilog.info(0x0000, 'ArticleDetail', `All keys in data: ${Object.keys(data).join(', ')}`);
+        hilog.info(0x0000, 'ArticleDetail', `articleAuthorThumbnailURL48: ${data.articleAuthorThumbnailURL48}`);
         
         // 处理可能的嵌套结构
         if (data.oId) {
@@ -180,12 +177,7 @@ struct ArticleDetailPage {
             articleTags: data.articleTags || '',
             articleAuthorId: data.articleAuthorId || '',
             articleAuthorName: data.articleAuthorName || '',
-            // 优先使用 articleAuthorThumbnailURL48，兼容旧字段
-            // 也可以从 articleAuthor.userAvatarURL 获取
-            articleAuthorAvatarURL: data.articleAuthorThumbnailURL48 || 
-                                    data.articleAuthorThumbnailURL210 || 
-                                    data.articleAuthor?.userAvatarURL ||
-                                    data.articleAuthorAvatarURL || '',
+            articleAuthorAvatarURL: data.articleAuthorThumbnailURL48 || '',
             articleCreateTime: data.articleCreateTime || '',
             articleUpdateTime: data.articleUpdateTime || '',
             articleViewCount: data.articleViewCount || 0,
