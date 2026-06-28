@@ -163,35 +163,8 @@ struct ArticleDetailPage {
       if (response.code === 0 && response.data) {
         const data = response.data;
         
-        hilog.info(0x0000, 'ArticleDetail', `articleAuthorThumbnailURL48: ${data.articleAuthorThumbnailURL48}`);
-        
-        // 处理可能的嵌套结构
-        if (data.oId) {
-          // 直接是文章对象
-          this.article = {
-            oId: data.oId,
-            articleTitle: data.articleTitle || '',
-            articleContent: data.articleContent || '',
-            articleOriginalContent: data.articleOriginalContent || '',
-            articleAbstract: data.articleAbstract || '',
-            articleTags: data.articleTags || '',
-            articleAuthorId: data.articleAuthorId || '',
-            articleAuthorName: data.articleAuthorName || '',
-            articleAuthorAvatarURL: data.articleAuthorThumbnailURL48 || '',
-            articleCreateTime: data.articleCreateTime || '',
-            articleUpdateTime: data.articleUpdateTime || '',
-            articleViewCount: data.articleViewCount || 0,
-            articleCommentCount: data.articleCommentCount || 0,
-            articleGoodCnt: data.articleGoodCnt || 0,
-            articleThankCnt: data.articleThankCnt || 0,
-            articleRewardPoint: data.articleRewardPoint || 0,
-            articleStick: data.articleStick || false,
-            articlePerfect: data.articlePerfect || false
-          };
-          
-          hilog.info(0x0000, 'ArticleDetail', `Final avatar URL: ${this.article.articleAuthorAvatarURL}`);
-        } else if (data.article && data.article.oId) {
-          // 嵌套结构 { article: {...} }
+        // API 返回 { article: {...} } 结构
+        if (data.article) {
           this.article = data.article;
         }
         
@@ -425,7 +398,7 @@ struct ArticleDetailPage {
 
               // 作者信息
               Row() {
-                Image(this.article!.articleAuthorAvatarURL || '')
+                Image(this.article!.articleAuthorThumbnailURL48 || this.article!.articleAuthorAvatarURL || '')
                   .width(36)
                   .height(36)
                   .borderRadius(18)
