@@ -3,6 +3,9 @@ import { StorageUtil } from '../util/StorageUtil';
 import { TimeUtil } from '../util/TimeUtil';
 import { Article, ArticleDetailResponse, Comment, CommentListResponse, ArticleDetailData, CommentThreadReply, ReplyListResponse } from '../model/Article';
 import { processText, processCommentHtml } from '../util/EmojiUtil';
+import { StyledStringUtil } from '../util/StyledStringUtil';
+import { parseHtmlContent, ContentSegment } from '../util/HtmlParserUtil';
+import { CommentContent } from '../components/CommentContent';
 import hilog from '@ohos.hilog';
 import { Markdown, MarkdownController } from '@luvi/lv-markdown-in';
 
@@ -706,13 +709,10 @@ struct ArticleDetailPage {
       }
       .width('100%')
 
-      // 评论内容 - 使用StyledString渲染HTML（支持图片）
-      Text(undefined, { controller: this.getCommentController(comment.oId) })
+      // 评论内容 - 使用自定义HTML解析渲染
+      CommentContent({ htmlContent: comment.commentContent })
         .width('100%')
         .margin({ top: 10 })
-        .onAppear(() => {
-          this.renderCommentContent(comment);
-        })
 
       // 评论操作
       Row() {
@@ -908,13 +908,10 @@ struct ArticleDetailPage {
             .margin({ left: 8 })
         }
         
-        // 回复内容 - 使用StyledString渲染HTML（支持图片）
-        Text(undefined, { controller: this.getReplyController(reply.oId) })
+        // 回复内容 - 使用自定义HTML解析渲染
+        CommentContent({ htmlContent: reply.commentContent })
           .width('100%')
           .margin({ top: 4 })
-          .onAppear(() => {
-            this.renderReplyContent(reply);
-          })
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
