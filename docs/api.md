@@ -1,515 +1,603 @@
-# 摸鱼派 (FishPi) 开放 API 参考文档
+# 摸鱼派 API 文档
 
-> 版本：V2.3.2 | 基准 URL：`https://fishpi.cn`
->
-> 基于 [fishpi 官方 npm 包](https://www.npmjs.com/package/fishpi) 源码及项目实际调用整理。
+## 注意事项
 
----
+* 请一定要在请求时带上 UA，推荐使用 Chrome 的 UA，空 UA 将返回 500 状态码
+* 对单个接口的访问频率必须控制在最低1次/30秒，否则IP可能进入小黑屋（WebSocket、发送消息接口除外）
+* 所有WebSocket频道设计时必须有断开自动重连机制
 
-## 1. 概述
+## 鉴权
 
-### 1.1 基础信息
+摸鱼派社区 API 引入了 `apiKey` 的概念，对 API 的请求不需要提供 Cookie，只需要在参数中带上申请的 `apiKey` 即可。
 
-| 项目 | 说明 |
-|------|------|
-| 基准 URL | `https://fishpi.cn` |
-| 认证方式 | 通过 `apiKey` 参数（登录后获取） |
-| 响应格式（常规） | `{ code, msg, data }`，`code === 0` 表示成功 |
-| 响应格式（/chat/*） | `{ result, data, cached }`，`result === 0` 表示成功<br>（项目在 `privatechat.js` 中统一映射为 `code`） |
-| WebSocket 公聊 | `wss://fishpi.cn/chat-room-channel` |
-| WebSocket 用户通道 | `wss://fishpi.cn/user-channel?apiKey=...` |
-| WebSocket 私聊 | `wss://fishpi.cn/chat-channel?apiKey=...&toUser=...` |
+> 注意：凡是 POST 请求，请求体必须是 JSON 格式，例如：`{ "nameOrEmail":"","userPassword":"" }`
 
-### 1.2 请求拦截器
+### 获取 apiKey
 
-本项目通过 Axios 拦截器自动注入 `apiKey`：
+`POST` `/api/getKey`
 
-- **GET/HEAD/DELETE**：`apiKey` 自动附加到 `params`
-- **POST/PUT/PATCH**：`apiKey` 自动附加到 `data`
-- **FormData**：由 `upload()` 函数手动处理
+用于 API 获取摸鱼派的通用密钥，`Key` 即身份，`Key` 长期有效，如果服务器重启，则需要重新获取，建议配合 `/api/user` 接口定期检测 `Key` 是否有效。
 
-### 1.3 响应拦截器
+请求:
 
-- HTTP `200`：返回 `response.data`（即 `{ code, msg, data }` 结构）
-- 非 `200` 或网络错误：触发 `errorHandler`，返回 rejected Promise
+| Key          | 说明                               | 示例                             |
+| ------------ | ---------------------------------- | -------------------------------- |
+| nameOrEmail  | 用户名或邮箱地址                   | username                         |
+| userPassword | 使用 MD5 加密后的密码*             | e10adc3949ba59abbe56e057f20f883e |
+| mfaCode      | 两步认证一次性密码（如未设置留空） | 123456                           |
 
----
+请求示例：
 
-## 2. 认证 API
-
-### 2.1 登录（获取 API Key）
-
-```
-POST /api/getKey
+```bash
+curl --location --request POST 'https://fishpi.cn/api/getKey' \
+--header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36' \
+--data-raw '{
+ "nameOrEmail":"username",
+ "userPassword":"e10adc3949ba59abbe56e057f20f883e",
+ "mfaCode":"123456"
+}'
 ```
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| 账号信息 | `object` | 是 | 用户登录凭证 |
+> <sup>*</sup> 注意：这里不支持直接传递明文，必须是32位小写MD5加密后的密码
 
-**响应：** `{ code: 0, Key: "<apiKey>", msg: "..." }`
+响应：
 
-### 2.2 获取当前用户信息
+| Key  | 说明                           | 示例                             |
+| ---- | ------------------------------ | -------------------------------- |
+| Key  | API 通用密钥，用于用户身份识别 | oXTQTD4ljryXoIxa1lySgEl6aObrIhSS |
+| msg  | 错误信息                       | 密码错误                         |
+| code | 0 为请求成功，-1 失败          | -1                               |
 
-```
-GET /api/user
-```
+### 查询用户信息
 
-**响应：** `{ code: 0, data: { userName, userAvatarURL, ... } }`
+`GET` `/api/user?apiKey=<Key>`
 
----
+通过指定的 API Key 查询用户信息（可以用来定期验证 API Key 是否有效）
 
-## 3. 公聊 (Chat Room) API
+请求:
 
-### 3.1 获取频道节点
+| Key    | 说明     | 示例                             |
+| ------ | -------- | -------------------------------- |
+| apiKey | 通用密钥 | oXTQTD4ljryXoIxa1lySgEl6aObrIhSS |
 
-```
-GET /chat-room/node/get
-```
+请求示例：
 
-**说明：** 获取可用的 WebSocket 节点地址，返回的 `data` 即为 `wss://` 连接地址。
-
-**响应：** `{ code: 0, data: "wss://fishpi.cn/chat-room-channel" }`
-
-### 3.2 加载更多消息列表
-
-```
-GET /chat-room/getMessage
+```bash
+curl --location --request GET 'https://fishpi.cn/api/user?apiKey=oXTQTD4ljryXoIxa1lySgEl6aObrIhSS'
+--header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36' \
 ```
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| apiKey| 	通用密钥| | 	oXTQTD4ljryXoIxa1lySgEl6aObrIhSS
-| oId| 	消息oId| 	| 1650609438569
-| size| | | 	显示消息个数（不包括当mode为0时实际个数乘以2）	25|
-| mode| | 	| mode = 0 显示本条及之前、之后的消息mode = 1 显示本条及之前的消息mode = 2 显示本条及之后的消息	0
+响应：
 
-**响应：** `{ code: 0, data: [消息数组] }`
+| Key                  | 说明                                                                  | 示例                                              |
+| -------------------- | --------------------------------------------------------------------- | ------------------------------------------------- |
+| code                 | 为0则密钥有效，为-1则密钥无效                                         | 0                                                 |
+| msg                  | 错误信息                                                              | Invalid Api Key.                                  |
+| data*                | 对应用户详细信息                                                      | `{ ... }`                                         |
+| - oId                | Id                                                                    | 1630512345670                                     |
+| - userNo             | 用户序号                                                              | 26                                                |
+| - userName           | 用户名                                                                | imlinhanchao                                      |
+| - userRole           | 用户组                                                                | OP                                                |
+| - userNickname       | 昵称                                                                  | 我是跳跳吧                                        |
+| - userAvatarURL      | 头像地址                                                              | https://...                                       |
+| - userCity           | 最近所在城市，根据用户 IP 确定                                        | 深圳                                              |
+| - userOnlineFlag     | 是否在线                                                              | true                                              |
+| - onlineMinute       | 在线时长，单位分钟                                                    | 85467                                             |
+| - userPoint          | 积分                                                                  | 183939                                            |
+| - userAppRole        | 角色                                                                  | 0 = 黑客，1 = 画家                                |
+| - userIntro          | 签名                                                                  | 人生而自由，卻無往不在枷鎖之中。                  |
+| - userURL            | URL                                                                   | https://...                                       |
+| - cardBg             | 卡片背景                                                              | https://...                                       |
+| - followingUserCount | 关注用户                                                              | 5                                                 |
+| - sysMetal           | 徽章列表, JSON**字符串**                                              | `{ ... }`                                         |
+| -- list              | 徽章列表数据                                                          | `[ ... ]`                                         |
+| --- attr             | 徽章数据，包含徽章图地址`url`, 背景色 `backcolor`, 前景色 `fontcolor` | url=https://...&backcolor=b91c22&fontcolor=ffffff |
+| --- name             | 徽章名称                                                              | Operator                                          |
+| --- description      | 徽章描述                                                              | 摸鱼派官方开发组成员                              |
+| --- data             | 徽章数据                                                              | 无                                                |
 
-### 3.3 初始化加载消息
+> <sup>*</sup> 注意：若密钥无效，无 `data` 项目
 
-```
-GET /chat-room/more
-```
+### 注册用户
 
-| 参数     | 类型    | 必填 | 说明 |
-|--------|-------|------|----|
-| `page` | `int` | 是 | 页数 |
+以下关于注册用户接口的内容我以提供注册思路为导向进行编写，方便大家对接。
 
-**响应：** `{ code: 0, data: [消息数组] }`
+**第一步** 获取一个图形验证码，要求用户识别并填写，带入到第二步的请求中
 
-### 3.4 发送消息
+获取图形验证码可访问 `GET /captcha`
 
-```
-POST /chat-room/send
-```
+**第二步** 向摸鱼派请求获取短信验证码
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `content` | `string` | 是 | 消息内容（支持 Markdown） |
-| `client` | `string` | 自动 | 客户端标识，由请求模块自动生成 |
+`POST /register`
 
-**响应：** `{ code: 0 }`
+请求:
 
-### 3.5 撤回消息
+| Key        | 说明                                                                                                                                             | 示例        |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- |
+| userName   | 用户名                                                                                                                                           | adlered     |
+| userPhone  | 手机号                                                                                                                                           | 13261327290 |
+| invitecode | 邀请码（选填，无则留空，必须提供让用户填写邀请人的输入框，如果用户留空，可以将作者作为邀请人，但如果用户主动填写了邀请人，则必须按用户输入请求） | 000000      |
+| captcha    | 第一步的验证码（大小写不敏感）                                                                                                                   | abcd        |
 
-```
-DELETE /chat-room/revoke/{oId}
-```
+**第三步** 验证短信验证码是否正确
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `oId` | `string` | 是 | 消息 ID（路径参数） |
+`GET /verify?code=<code>`
 
-### 3.6 获取原始 Markdown
+请求：
 
-```
-GET /cr/raw/{oId}
-```
+| Key  | 说明       | 示例   |
+| ---- | ---------- | ------ |
+| code | 短信验证码 | 123456 |
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `oId` | `string` | 是 | 消息 ID（路径参数） |
+返回结果后请验证返回 JSON 中 code 的值是否为 0，如为 0 则验证码正确，**并记录下返回的userId**。
 
-**响应：** 消息的原始 Markdown 内容
+**第四步** 设定密码和邮箱
 
-### 3.7 红包相关
+`POST /register2?r=<r>`
 
-#### 领取红包
+**请注意！请将密码在本地MD5加密后再放到 userPassword 中！不接受明文密码！**
 
-```
-POST /chat-room/red-packet/open
-```
+| Key          | 说明                                   | 示例                             |
+| ------------ | -------------------------------------- | -------------------------------- |
+| userAppRole  | 角色（0为黑客，1为画家）               | 0                                |
+| userPassword | 使用 MD5 加密后的密码 *                | e10adc3949ba59abbe56e057f20f883e |
+| userId       | 请填写第三步返回的userId               | 1652062402334                    |
+| r            | 邀请人的用户名（选填，无邀请人则留空） | csfwff                           |
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `oId` | `string` | 是 | 红包消息 ID |
+code 返回 0 则注册成功！
 
-**响应：** `{ code: 0, data: { who: [...], got: [...] } }`
+## 通用
 
-### 3.8 文件上传
+### 通过API累计用户的在线时间
 
-```
-POST /upload
-```
+`wss://fishpi.cn/user-channel?apiKey=<Key>`
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `file[]` | `File` | 是 | 上传文件（FormData） |
+客户端开发者请注意，如果想让用户在使用客户端时也能累计在线时间，请将客户端在后台长期连接到此Websocket。此Websocket不会给你发送任何消息，你也不用给他发送任何消息，只需要挂着这个连接就可以了。
 
-**请求格式：** `multipart/form-data`（`apiKey` 需手动加入 FormData）
+此Websocket在 `首次连接`时开始累计在线时间，直到 `最后一个该用户的user-channel会话断开`才会结算。期间如果你获取在线时间是不会动态变化的，你可以在客户端的前端做一个60秒的循环，每60秒把在线时间+1，这样在用户观感上在线时间就是动态的了。
 
-### 3.9 表情与图床
+注意：为确保计算准确，必须**有**断开自动重连机制，但请**不要**发送心跳包，Websocket会每15分钟断开一次。
 
-#### 获取表情列表
+### 查询成员信息
 
-```
-GET /users/emotions
-```
+`GET` `/user/<username>?apiKey=<Key>`
 
-#### 获取图床图片
+查询某个成员的信息
 
-```
-POST /api/cloud/get
-```
+请求:
 
-#### 同步图床图片
+| Key      | 说明      | 示例                             |
+| -------- | --------- | -------------------------------- |
+| username | 用户名    | taozhiyu                         |
+| apiKey   | 通用密钥* | oXTQTD4ljryXoIxa1lySgEl6aObrIhSS |
 
-```
-POST /api/cloud/sync
-```
+> <sup>*</sup> 选填，填写后 `canFollow` 返回值可以显示是否已经关注该用户
 
----
+请求示例：
 
-## 4. 私聊 (Private Chat) API
-
-> **重要：** 所有 `/chat/*` 端点的响应字段名是 `result`（不是 `code`），格式为 `{ result, data, cached }`。
-> 项目的 `privatechat.js` 会在 API 层将 `result` 统一映射为 `code`，上层代码统一使用 `code === 0` 判断。
-
-### 4.1 获取聊天列表
-
-```
-GET /chat/get-list
+```bash
+curl --location --request GET 'https://fishpi.cn/user/taozhiyu?apiKey=oXTQTD4ljryXoIxa1lySgEl6aObrIhSS'\
+--header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36' \
 ```
 
-**响应：** `{ code: 0, data: [{ oId, receiverUserName, receiverAvatar, preview, time, user_session }, ...] }`
+响应：
 
-### 4.2 获取聊天消息
+| Key                | 说明                                                                  | 示例                                              |
+| ------------------ | --------------------------------------------------------------------- | ------------------------------------------------- |
+| oId                | Id                                                                    | 1630512345670                                     |
+| userNo             | 用户序号                                                              | 26                                                |
+| userName           | 用户名                                                                | imlinhanchao                                      |
+| userRole           | 用户组                                                                | OP                                                |
+| userNickname       | 昵称                                                                  | 我是跳跳吧                                        |
+| userAvatarURL      | 头像地址                                                              | https://...                                       |
+| userCity           | 最近所在城市，根据用户 IP 确定                                        | 深圳                                              |
+| userOnlineFlag     | 是否在线                                                              | true                                              |
+| onlineMinute       | 在线时长，单位分钟                                                    | 85467                                             |
+| userPoint          | 积分                                                                  | 183939                                            |
+| canFollow          | 是否可以关注                                                          | no/yes/hide                                       |
+| userAppRole        | 角色                                                                  | 0 = 黑客，1 = 画家                                |
+| userIntro          | 签名                                                                  | 人生而自由，卻無往不在枷鎖之中。                  |
+| userURL            | URL                                                                   | https://...                                       |
+| cardBg             | 卡片背景                                                              | https://...                                       |
+| followingUserCount | 关注用户                                                              | 5                                                 |
+| sysMetal           | 徽章列表, JSON**字符串**                                              | `{ ... }`                                         |
+| - list             | 徽章列表数据                                                          | `[ ... ]`                                         |
+| -- attr            | 徽章数据，包含徽章图地址`url`, 背景色 `backcolor`, 前景色 `fontcolor` | url=https://...&backcolor=b91c22&fontcolor=ffffff |
+| -- name            | 徽章名称                                                              | Operator                                          |
+| -- description     | 徽章描述                                                              | 摸鱼派官方开发组成员                              |
+| -- data            | 徽章数据                                                              | 无                                                |
 
-```
-GET /chat/get-message
-```
+### 用户名联想
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `toUser` | `string` | 是 | 对方用户名 |
-| `page` | `number` | 否 | 页码（默认 1） |
-| `pageSize` | `number` | 否 | 每页条数（默认 20） |
+`POST /users/names`
 
-**响应：** `{ code: 0, data: [{ oId, senderAvatar, senderUserName, content, time, type }, ...] }`
+通过现有的字符串推断完整的用户名（列表）
 
-### 4.3 标记已读
+请求:
 
-```
-GET /chat/mark-as-read
-```
+| Key  | 说明           | 示例 |
+| ---- | -------------- | ---- |
+| name | 不完整的用户名 | ad   |
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `fromUser` | `string` | 是 | 对方用户名 |
+请求示例：
 
-### 4.4 检查未读消息
-
-```
-GET /chat/has-unread
-```
-
-**响应：** `{ code: 0, data: [{ user_session, ... }] }`
-
-> `data` 为未读消息的用户会话数组，空数组表示无未读。
-
----
-
-## 5. 用户 API
-
-### 5.1 获取活跃度
-
-```
-GET /user/liveness
-```
-
-### 5.2 获取昨日活跃度奖励
-
-```
-GET /activity/yesterday-liveness-reward-api
+```bash
+curl --location --request POST 'https://fishpi.cn/users/names' \
+--header 'Content-Type: application/json' \
+--header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36' \
+--data-raw '{
+ "name":"ad"
+}'
 ```
 
-### 5.3 查询活跃度是否已领取
+响应：
 
-```
-GET /api/activity/is-collected-liveness
-```
+| Key             | 说明                          | 示例        |
+| --------------- | ----------------------------- | ----------- |
+| code            | 为0则密钥有效，为-1则密钥无效 | 0           |
+| msg             | 错误信息                      |             |
+| data            | 用户列表                      | `[ ... ]`   |
+| - userAvatarURL | 头像                          | https://... |
+| - userName      | 用户名                        | adlered     |
 
-### 5.4 获取用户信息
+### 用户常用表情
 
-```
-GET /user/{userName}
-```
+`GET /users/emotions?apiKey=<Key>`
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `userName` | `string` | 是 | 用户名（路径参数） |
+获取用户常用表情
 
-### 5.5 批量获取用户名
+请求:
 
-```
-POST /users/names
-```
+| Key    | 说明     | 示例                             |
+| ------ | -------- | -------------------------------- |
+| apiKey | 通用密钥 | oXTQTD4ljryXoIxa1lySgEl6aObrIhSS |
 
-### 5.6 关注用户
+请求示例：
 
-```
-POST /follow/user
-```
-
-### 5.7 取消关注
-
-```
-POST /unfollow/user
+```bash
+curl --location --request GET 'https://fishpi.cn/users/emotions?apiKey=oXTQTD4ljryXoIxa1lySgEl6aObrIhSS' \
+--header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36'
 ```
 
-### 5.8 转账积分
+响应：
 
-```
-POST /point/transfer
-```
+| Key              | 说明                              | 示例              |
+| ---------------- | --------------------------------- | ----------------- |
+| code             | 为0则密钥有效，为-1则密钥无效     | 0                 |
+| msg              | 错误信息                          |                   |
+| data             | 表情列表                          | `[ ... ]`         |
+| -`<<`emoji name> | Key 为 emoji 代码，值为对应 emoji | "smile":":smile:" |
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `toUser` | `string` | 是 | 接收方用户名 |
-| `amount` | `number` | 是 | 转账金额 |
-| `memo` | `string` | 否 | 转账备注 |
+### 获取活跃度
 
----
+`GET /user/liveness?apiKey=<Key>`
 
-## 6. 文章 API
+获取用户活跃度
 
-### 6.1 文章列表
+> **警告:warning:️️️️️️️️️️️️️️️️️️**:
+> 本接口负载较大，请至少将请求间隔延长至**10 分钟**，如间隔小于 10 分钟，接口将会返回 500！
 
-| 端点 | 说明 |
-|------|------|
-| `GET /api/articles/recent` | 最近文章 |
-| `GET /api/articles/recent/hot` | 热门文章 |
-| `GET /api/articles/recent/good` | 点赞文章 |
-| `GET /api/articles/recent/reply` | 最近回复 |
+请求：
 
-**公共参数：**
+| Key    | 说明     | 示例                             |
+| ------ | -------- | -------------------------------- |
+| apiKey | 通用密钥 | oXTQTD4ljryXoIxa1lySgEl6aObrIhSS |
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `p` | `number` | 否 | 页码 |
+请求示例：
 
-### 6.2 文章详情
-
-```
-GET /api/article/{articleId}
+```bash
+curl --location --request GET 'https://fishpi.cn/user/liveness?apiKey=oXTQTD4ljryXoIxa1lySgEl6aObrIhSS' \
+--header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36'
 ```
 
-### 6.3 文章互动
+响应：
 
-#### 点赞文章
+| Key      | 说明   | 示例  |
+| -------- | ------ | ----- |
+| liveness | 活跃度 | 80.20 |
 
-```
-POST /vote/up/article
-```
+### 获取签到状态
 
-#### 感谢文章
+`GET /user/checkedIn?apiKey=<Key>`
 
-```
-POST /article/thank?articleId={articleId}
-```
+获取用户是否签到
 
-### 6.4 评论
+请求:
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/api/comment/{articleId}` | GET | 获取文章评论列表 |
-| `/comment` | POST | 发表评论 |
-| `/vote/up/comment` | POST | 点赞评论 |
-| `/comment/thank` | POST | 感谢评论 |
-| `/comment/{commentId}/remove` | POST | 删除评论 |
+| Key    | 说明     | 示例                             |
+| ------ | -------- | -------------------------------- |
+| apiKey | 通用密钥 | oXTQTD4ljryXoIxa1lySgEl6aObrIhSS |
 
----
+请求示例:
 
-## 7. 清风明月 (Breezemoon) API
-
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/api/breezemoons` | GET | 获取清风明月列表 |
-| `/breezemoon` | POST | 发布清风明月 |
-| `/api/user/{userName}/breezemoons` | GET | 获取指定用户的清风明月 |
-
----
-
-## 8. 通知 API
-
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/api/getNotifications` | GET | 获取通知列表 |
-| `/notifications/unread/count` | GET | 获取未读通知数 |
-| `/notifications/make-read/{type}` | GET | 将指定类型通知标记为已读 |
-
----
-
-## 9. 注册 API
-
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/register` | POST | 注册（第一步） |
-| `/verify?code={code}` | GET | 验证邮箱验证码 |
-| `/register2?r={inviteCode}` | POST | 注册（第二步） |
-
----
-
-## 10. WebSocket 通信协议
-
-### 10.1 公聊 WebSocket
-
-**连接地址：** `wss://fishpi.cn/chat-room-channel`（或通过 `/chat-room/node/get` 获取）
-
-**心跳机制：** 每 20 秒发送 `-hb-`
-
-**消息格式（服务端 → 客户端）：**
-
-```json
-{
-  "type": "msg | online | revoke | redPacketStatus | discussChanged | customMessage | barrage",
-  "oId": "消息ID",
-  "userName": "发送者",
-  "md": "消息内容",
-  "...": "..."
-}
+```bash
+curl --location --request GET 'https://fishpi.cn/user/checkedIn?apiKey=oXTQTD4ljryXoIxa1lySgEl6aObrIhSS' \
+--header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36'
 ```
 
-**消息类型说明：**
+响应：
 
-| type | 说明 |
-|------|------|
-| `msg` | 普通聊天消息 |
-| `online` | 在线用户信息 |
-| `revoke` | 消息撤回 |
-| `redPacketStatus` | 红包领取状态 |
-| `discussChanged` | 话题变更 |
-| `customMessage` | 自定义消息 |
-| `barrage` | 弹幕消息 |
+| Key       | 说明     | 示例 |
+| --------- | -------- | ---- |
+| checkedIn | 是否签到 | true |
 
-### 10.2 用户通道 WebSocket
+### 领取昨日活跃奖励
 
-**连接地址：** `wss://fishpi.cn/user-channel?apiKey={apiKey}`
+`GET /activity/yesterday-liveness-reward-api?apiKey=<Key>`
 
-**用途：** 累计用户在线时间
+领取昨日活跃奖励
 
-### 10.3 私聊 WebSocket
+请求示例:
 
-**连接地址：** `wss://fishpi.cn/chat-channel?apiKey={apiKey}&toUser={userName}`
+| Key    | 说明     | 示例                             |
+| ------ | -------- | -------------------------------- |
+| apiKey | 通用密钥 | oXTQTD4ljryXoIxa1lySgEl6aObrIhSS |
 
-**发送消息：** 直接通过 WebSocket `send()` 发送文本内容（非 JSON）
+请求示例:
 
-**接收消息格式：**
-
-```json
-{
-  "type": "msg",
-  "oId": "消息ID",
-  "time": "时间戳",
-  "senderUserName": "发送者",
-  "senderAvatar": "头像URL",
-  "content": "消息内容（HTML）"
-}
+```bash
+curl --location --request GET 'https://fishpi.cn/activity/yesterday-liveness-reward-api?apiKey=oXTQTD4ljryXoIxa1lySgEl6aObrIhSS' \
+--header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36'
 ```
 
-**自动重连：** 非正常关闭（`code !== 1000 && code !== 1001`）时自动重连
+响应：
 
----
+| Key | 说明                        | 示例 |
+| --- | --------------------------- | ---- |
+| sum | 领取到的积分，-1 表示已领取 | 300  |
 
-## 11. 扩展内部消息协议
+### 查询昨日奖励领取状态
 
-### 11.1 Popup ↔ Background (长连接)
+`GET /api/activity/is-collected-liveness`
 
-通过 `chrome.runtime.connect()` 建立，端口名为 `'privateChat'`（私聊）或无名称（公聊）。
+查询昨日活跃奖励是否已被领取
 
-**EVENT 定义：**
+请求示例:
 
-| 常量 | 值 | 方向 | 说明 |
-|------|-----|------|------|
-| `LOGIN` | 0 | Popup → BG | 登录事件 |
-| `LOGIN_OUT` | -1 | Popup → BG | 登出事件 |
-| `loadMessage` | 1 | BG → Popup | 初始消息列表 |
-| `more` | 2 | BG → Popup | 更多消息 |
-| `getMore` | 3 | Popup → BG | 请求更多消息 |
-| `message` | 4 | BG → Popup | 新消息 |
-| `redPacketStatus` | 5 | BG → Popup | 红包状态 |
-| `revoke` | 6 | BG → Popup | 撤回消息 |
-| `online` | 7 | BG → Popup | 在线信息 |
-| `markRedPacket` | 10 | BG → Popup | 标记红包 |
-| `discussChanged` | 11 | BG → Popup | 话题变更 |
-| `sendMessage` | 12 | Popup → BG | 发送消息 |
-| `userInfo` | 13 | 双向 | 用户信息 |
-| `openRedPacket` | 14 | Popup → BG | 领取红包 |
-| `openPrivateChat` | 15 | Popup → BG | 打开私聊 WS |
-| `closePrivateChat` | 16 | Popup → BG | 关闭私聊 WS |
-| `sendPrivateMessage` | 17 | Popup → BG | 发送私聊消息 |
-| `privateMessage` | 18 | BG → Popup | 接收私聊消息 |
+| Key    | 说明     | 示例                             |
+| ------ | -------- | -------------------------------- |
+| apiKey | 通用密钥 | oXTQTD4ljryXoIxa1lySgEl6aObrIhSS |
 
-### 11.2 Content Scripts ↔ Background (一次性消息)
+请求示例:
 
-通过 `chrome.runtime.sendMessage()`，使用 `TABS_EVENT` 常量（全部为字符串值）：
-
-| 常量 | 值 | 说明 |
-|------|-----|------|
-| `showImage` | `'showImage'` | 显示图片 |
-| `message` | `'message'` | 网页接收消息 |
-| `sendMessage` | `'sendMessage'` | 网页发送消息 |
-| `syncOptions` | `'syncOptions'` | 同步配置 |
-| `openRedPacket` | `'openRedPacket'` | 网页领取红包 |
-| `markRedPacket` | `'markRedPacket'` | 标记红包 |
-| `openPrivateChat` | `'openPrivateChat'` | 打开私聊 |
-| `closePrivateChat` | `'closePrivateChat'` | 关闭私聊 |
-| `privateMessage` | `'privateMessage'` | 私聊消息 |
-
----
-
-## 12. 项目代码映射
-
-### API 层文件
-
-| 文件 | 对应功能 |
-|------|----------|
-| [`src/common/api/request.js`](../src/common/api/request.js) | Axios 实例、请求/响应拦截器 |
-| [`src/common/api/auth.js`](../src/common/api/auth.js) | 登录、获取用户信息 |
-| [`src/common/api/chatroom.js`](../src/common/api/chatroom.js) | 公聊消息、红包、文件、表情、图床 |
-| [`src/common/api/privatechat.js`](../src/common/api/privatechat.js) | 私聊列表、消息、已读、未读 |
-| [`src/common/api/user.js`](../src/common/api/user.js) | 活跃度、用户信息、关注、转账 |
-| [`src/common/api/article.js`](../src/common/api/article.js) | 文章列表、详情、点赞、评论 |
-| [`src/common/api/breezemoon.js`](../src/common/api/breezemoon.js) | 清风明月 |
-| [`src/common/api/notification.js`](../src/common/api/notification.js) | 通知列表、未读数、标记已读 |
-| [`src/common/api/register.js`](../src/common/api/register.js) | 注册、验证 |
-| [`src/common/api/channel.js`](../src/common/api/channel.js) | 获取 WS 频道节点 |
-
-### WebSocket 管理层
-
-| 文件 | 对应功能 |
-|------|----------|
-| [`src/background/manager/WebSocketManager.js`](../src/background/manager/WebSocketManager.js) | 公聊 WS 连接、心跳、重连 |
-| [`src/background/manager/PrivateChatWebSocketManager.js`](../src/background/manager/PrivateChatWebSocketManager.js) | 私聊 WS 连接、发送、重连 |
-
-### 通信架构
-
+```bash
+curl --location --request GET 'https://fishpi.cn/api/activity/is-collected-liveness?apiKey=oXTQTD4ljryXoIxa1lySgEl6aObrIhSS' \
+--header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36'
 ```
-Popup (Vue SPA)
-    ↕ chrome.runtime.connect() — 长连接端口
-Background (Service Worker)
-    ↕ WebSocket — fishpi.cn
-    ↕ chrome.runtime.sendMessage() — 一次性消息
-Content Scripts (网页注入)
+
+响应：
+
+| Key                                | 说明            | 示例 |
+| ---------------------------------- | --------------- | ---- |
+| isCollectedYesterdayLivenessReward | true 表示已领取 | true |
+
+### 举报
+
+`POST /report`
+
+举报内容接口
+**请注意！** 该接口为复用接口，请确保 `Content-Type` 为 `application/x-www-form-urlencoded` 而非JSON，否则将无法请求成功
+
+请求：
+
+| Key            | 说明         | 示例                                                                                              |
+| -------------- | ------------ | ------------------------------------------------------------------------------------------------- |
+| apiKey         | 通用密钥     | oXTQTD4ljryXoIxa1lySgEl6aObrIhSS                                                                  |
+| reportDataId   | 举报 Id      | 1651126540998                                                                                     |
+| reportDataType | 举报数据类型 | 0:文章,1:评论,2:用户,3:聊天消息                                                                   |
+| reportType     | 举报类型     | 0:垃圾广告,1: H,2:违规,3:侵权,4:人身攻击,5:冒充他人账号,6:垃圾广告账号,7:违规泄露个人信息,49:其他 |
+| reportMemo     | 举报理由     | 该用户涉嫌发送违规内容                                                                            |
+
+请求示例：
+
+```bash
+curl --location --request POST 'https://fishpi.cn/report' \
+--header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36' \
+--header 'Content-Type: application/json' \
+--data-raw '{
+ "apiKey":"oXTQTD4ljryXoIxa1lySgEl6aObrIhSS",
+ "reportDataId":"1651126540998",
+ "reportDataType":3,
+ "reportType":49,
+ "reportMemo":""，
+}'
 ```
+
+响应：
+
+| Key  | 说明                              | 示例 |
+| ---- | --------------------------------- | ---- |
+| code | 为 0 则密钥有效，为 -1 则密钥无效 | 0    |
+| msg  | 错误消息                          |      |
+
+### 查询最近注册的20个用户
+
+`GET /api/user/recentReg`
+
+### 转账
+
+`POST /point/transfer`
+
+请求：
+
+| Key      | 说明     | 示例                             |
+| -------- | -------- | -------------------------------- |
+| apiKey   | 通用密钥 | oXTQTD4ljryXoIxa1lySgEl6aObrIhSS |
+| userName | 收款人   | adlered                          |
+| amount   | 转账金额 | 100                              |
+| memo     | 转账备注 | hello                            |
+
+### 关注用户
+
+`POST /follow/user`
+
+请求：
+
+| Key         | 说明          | 示例                             |
+| ----------- | ------------- | -------------------------------- |
+| apiKey      | 通用密钥      | oXTQTD4ljryXoIxa1lySgEl6aObrIhSS |
+| followingId | 关注对象的oId | 1659430635383                    |
+
+### 取关用户
+
+`POST /unfollow/user`
+
+请求：
+
+| Key         | 说明          | 示例                             |
+| ----------- | ------------- | -------------------------------- |
+| apiKey      | 通用密钥      | oXTQTD4ljryXoIxa1lySgEl6aObrIhSS |
+| followingId | 关注对象的oId | 1659430635383                    |
+
+### 修改用户信息
+
+`POST /api/settings/profiles`
+
+请求：
+
+| Key          | 说明                             | 示例                             |
+| ------------ | -------------------------------- | -------------------------------- |
+| apiKey       | 通用密钥                         | oXTQTD4ljryXoIxa1lySgEl6aObrIhSS |
+| userNickname | 用户昵称                         | 阿达                             |
+| userTags     | 用户标签，多个标签用英文逗号分隔 | 标签1,标签2                      |
+| userURL      | 用户URL                          | https://xxx.com                  |
+| userIntro    | 个性签名                         | 这个人很懒，没有个性签名         |
+| mbti         | 用户的MBTI                       | ENFJ-A                           |
+
+### 修改用户头像
+
+`POST /api/settings/avatar`
+
+请求：
+
+| Key           | 说明        | 示例                                   |
+| ------------- | ----------- | -------------------------------------- |
+| apiKey        | 通用密钥    | oXTQTD4ljryXoIxa1lySgEl6aObrIhSS       |
+| userAvatarURL | 用户头像URL | https://file.fishpi.cn/2025/12/xxx.png |
+
+### 查询用户积分余额
+
+`GET /user/{用户名}/point`
+
+### 查询积分记录
+
+`GET /api/user/points`
+
+分页查询当前用户积分记录。管理员可通过 `userId` 查询指定用户。
+
+请求：
+
+| Key    | 说明                    | 示例                             |
+| ------ | ----------------------- | -------------------------------- |
+| apiKey | 通用密钥                | oXTQTD4ljryXoIxa1lySgEl6aObrIhSS |
+| p      | 页码，默认 1            | 1                                |
+| size   | 每页数量，默认 20，最大 200 | 20                               |
+| userId | 用户 oId，仅管理员可用  | 1659430635383                    |
+
+请求示例：
+
+```bash
+curl --location --request GET 'https://fishpi.cn/api/user/points?apiKey=oXTQTD4ljryXoIxa1lySgEl6aObrIhSS&p=1&size=20' \
+--header 'User-Agent: Mozilla/5.0'
+```
+
+响应：
+
+| Key                              | 说明                 | 示例          |
+| -------------------------------- | -------------------- | ------------- |
+| code                             | 0 为成功，-1 为失败  | 0             |
+| msg                              | 错误消息             |               |
+| data                             | 响应数据             |               |
+| - userId                         | 用户 oId             | 1659430635383 |
+| - records                        | 积分记录列表         |               |
+| -- oId                           | 记录 oId             | 1760000000000 |
+| -- fromId                        | 支出用户 oId         | 1659430635383 |
+| -- toId                          | 收入用户 oId         | sys           |
+| -- sum                           | 积分数量             | 20            |
+| -- type                          | 记录类型             | 8             |
+| -- time                          | 记录时间             | 1760000000000 |
+| -- dataId                        | 关联数据             | 1760000000000 |
+| -- memo                          | 备注                 | hello         |
+| -- operation                     | 收支方向             | +             |
+| -- balance                       | 操作后余额           | 183939        |
+| -- displayType                   | 类型名称             | 活动收益      |
+| -- description                   | 记录描述             | 签到奖励      |
+| - pagination                     | 分页信息             |               |
+| -- paginationCurrentPageNum      | 当前页               | 1             |
+| -- paginationPageSize            | 每页数量             | 20            |
+| -- paginationRecordCount         | 总记录数             | 100           |
+| -- paginationPageCount           | 总页数               | 5             |
+| -- paginationPageNums            | 页码列表             | [1,2,3,4,5]   |
+
+### 查询用户勋章
+
+`GET /user/{用户名}/medal`
+
+## 通知
+
+### 通知计数
+
+`GET /notifications/unread/count`
+
+获取用户未阅读的通知计数
+
+请求：
+
+| Key    | 说明     | 示例                             |
+| ------ | -------- | -------------------------------- |
+| apiKey | 通用密钥 | oXTQTD4ljryXoIxa1lySgEl6aObrIhSS |
+
+请求示例:
+
+```bash
+curl --location --request GET 'https://fishpi.cn/notifications/unread/count?apiKey=oXTQTD4ljryXoIxa1lySgEl6aObrIhSS' \
+--header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36'
+```
+
+响应：
+
+| Key                              | 说明                              | 示例 |
+| -------------------------------- | --------------------------------- | ---- |
+| code                             | 为 0 则密钥有效，为 -1 则密钥无效 | 0    |
+| userNotifyStatus                 | 是否启用 Web 通知                 | 0    |
+| unreadNotificationCnt            | 未读通知数                        | 0    |
+| unreadReplyNotificationCnt       | 未读回复通知数                    | 0    |
+| unreadPointNotificationCnt       | 未读积分通知数                    | 0    |
+| unreadAtNotificationCnt          | 未读 @ 通知数                     | 0    |
+| unreadBroadcastNotificationCnt   | 未读同城通知数                    | 0    |
+| unreadSysAnnounceNotificationCnt | 未读系统通知数                    | 0    |
+| unreadNewFollowerNotificationCnt | 未读关注者通知数                  | 0    |
+| unreadFollowingNotificationCnt   | 未读关注通知数                    | 0    |
+| unreadCommentedNotificationCnt   | 未读评论通知数                    | 0    |
+
+### 通知详情
+
+`GET /api/getNotifications?apiKey=<Key>&type=<type>[&page=<page>]`
+
+获取详细通知列表
+
+请求：
+
+| Key    | 说明              | 示例                             |
+| ------ | ----------------- | -------------------------------- |
+| apiKey | 通用密钥          | oXTQTD4ljryXoIxa1lySgEl6aObrIhSS |
+| type   | 要获取的通知类型  | point                            |
+| p      | 页数可选，默认为1 | 1                                |
+
+通知类型：
+
+| Type         | 说明       |
+| ------------ | ---------- |
+| point        | 积分       |
+| commented    | 收到的回帖 |
+| reply        | 收到的回复 |
+| at           | 提及我的   |
+| following    | 我关注的   |
+| broadcast    | 同城       |
+| sys-announce | 系统       |
+
+请求示例:
+
+```bash
+curl --location --request GET 'https://fishpi.cn/api/getNotifications?apiKey=oXTQTD4ljryXoIxa1lySgEl6aObrIhSS&type=point' \
+--header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36'

@@ -1,36 +1,10 @@
 import { HttpUtil, ApiResponse } from '../util/HttpUtil';
 import { StorageUtil } from '../util/StorageUtil';
 import { TimeUtil } from '../util/TimeUtil';
-import { Article, ArticleDetailResponse, Comment, CommentListResponse, ArticleDetailData, CommentThreadReply } from '../model/Article';
+import { Article, ArticleDetailResponse, Comment, CommentListResponse, ArticleDetailData, CommentThreadReply, ReplyListResponse } from '../model/Article';
+import { processText, processCommentHtml } from '../util/EmojiUtil';
 import hilog from '@ohos.hilog';
-import { RichTextView } from '../components/RichTextView';
-
-/**
- * 回复列表响应
- */
-interface ReplyListResponse {
-  code: number;
-  msg?: string;
-  commentThreadReplies?: CommentThreadReply[];
-  pagination?: PaginationInfo;
-}
-
-/**
- * 分页信息
- */
-interface PaginationInfo {
-  paginationPageCount: number;
-  paginationRecordCount: number;
-}
-
-/**
- * 回复评论响应
- */
-interface ReplyResponse {
-  code: number;
-  msg?: string;
-  oId?: string;  // 新回复的ID
-}
+import { Markdown, MarkdownController } from '@luvi/lv-markdown-in';
 
 /**
  * 文章详情页面
@@ -46,25 +20,23 @@ struct ArticleDetailPage {
   @State isSendingComment: boolean = false;
   @State isLiked: boolean = false;
   @State articleId: string = '';
-
-  // ========== 新增功能状态 ==========
-  // 回复相关
-  @State replyingToComment: Comment | null = null;  // 正在回复的评论
-  @State replyText: string = '';  // 回复内容
-  @State isSendingReply: boolean = false;  // 正在发送回复
-  
-  // 删除确认
-  @State showDeleteDialog: boolean = false;  // 显示删除确认弹窗
-  @State deletingCommentId: string = '';  // 正在删除的评论ID
-  
-  // 感谢确认
-  @State showThankDialog: boolean = false;  // 显示感谢确认弹窗
-  @State thankLabel: string = '';  // 感谢确认文案
-  @State thankingCommentId: string = '';  // 正在感谢的评论ID
-  
-  // 评论选项
-  @State isAnonymous: boolean = false;  // 匿名评论
-  @State isPrivate: boolean = false;  // 仅楼主可见
+  // 评论相关状态
+  @State commentSort: string = 'hot';  // 排序方式：hot/空
+  @State commentPage: number = 1;      // 当前页码
+  @State commentPageCount: number = 1; // 总页数
+  @State onlyAuthor: boolean = false;  // 只看楼主
+  // 正在加载回复的评论ID（用于显示加载状态）
+  @State loadingRepliesCommentId: string = '';
+  // Markdown 渲染控制器（用于代码块复制等功能）
+  private markdownController: MarkdownController = new MarkdownController();
+  // 是否渲染 Markdown 内容（延迟渲染优化性能）
+  @State shouldRenderContent: boolean = false;
+  // 是否使用 Markdown 格式渲染
+  @State useMarkdown: boolean = false;
+  // 评论内容控制器映射（用于StyledString渲染）
+  private commentControllers: Map<string, TextController> = new Map();
+  // 回复内容控制器映射（用于StyledString渲染）
+  private replyControllers: Map<string, TextController> = new Map();
 
   // 状态栏高度（用于避让）
   @StorageProp('topRectHeight') topRectHeight: number = 0;
@@ -74,6 +46,12 @@ struct ArticleDetailPage {
    * 从路由参数获取文章ID
    */
   async aboutToAppear(): Promise<void> {
+    // 注册代码块复制监听（v3.1.0+ 必需）
+    this.markdownController.setCodeCopyListener((text: string) => {
+      hilog.info(0x0000, 'ArticleDetail', `Copy code: ${text.substring(0, 50)}...`);
+      // 复制成功后可以显示 Toast 提示
+    });
+
     try {
       const params = this.getUIContext().getRouter().getParams() as Record<string, string>;
       this.articleId = params?.articleId || '';
@@ -83,10 +61,23 @@ struct ArticleDetailPage {
           this.loadArticle(),
           this.loadComments()
         ]);
+        
+        // 延迟渲染文章内容，优化性能
+        setTimeout(() => {
+          this.shouldRenderContent = true;
+        }, 100);
       }
     } catch (err) {
       // 获取路由参数失败
     }
+  }
+  
+  /**
+   * 页面销毁时清理资源
+   */
+  aboutToDisappear(): void {
+    // 重置渲染状态，帮助释放资源
+    this.shouldRenderContent = false;
   }
 
   /**
@@ -110,6 +101,7 @@ struct ArticleDetailPage {
             oId: data.oId,
             articleTitle: data.articleTitle || '',
             articleContent: data.articleContent || '',
+            articleOriginalContent: data.articleOriginalContent || '',
             articleAbstract: data.articleAbstract || '',
             articleTags: data.articleTags || '',
             articleAuthorId: data.articleAuthorId || '',
@@ -130,7 +122,11 @@ struct ArticleDetailPage {
           this.article = data.article;
         }
         
-        hilog.info(0x0000, 'ArticleDetail', `Article loaded: ${this.article?.articleTitle}`);
+        // 判断是否使用 Markdown 格式渲染
+        // 只有当 articleOriginalContent 存在且不为空时才使用 Markdown，否则使用 HTML（性能更好）
+        this.useMarkdown = !!(this.article?.articleOriginalContent && this.article.articleOriginalContent.trim().length > 0);
+        
+        hilog.info(0x0000, 'ArticleDetail', `Article loaded: ${this.article?.articleTitle}, useMarkdown: ${this.useMarkdown}`);
       }
     } catch (err) {
       hilog.error(0x0000, 'ArticleDetail', `Error: ${JSON.stringify(err)}`);
@@ -144,25 +140,51 @@ struct ArticleDetailPage {
    */
   private async loadComments(): Promise<void> {
     try {
-      const response = await HttpUtil.get<CommentListResponse>(`/api/comment/${this.articleId}`);
+      // 构建请求参数
+      const params = new Map<string, string | number>();
+      params.set('articleId', this.articleId);
+      params.set('paginationCurrentPageNum', this.commentPage);
+      
+      // 添加排序参数
+      if (this.commentSort === 'hot') {
+        params.set('sort', 'hot');
+      }
+      
+      // 添加只看楼主参数
+      if (this.onlyAuthor) {
+        params.set('author', '1');
+      }
+      
+      const response = await HttpUtil.post<CommentListResponse>(
+        '/comment/thread/parents',
+        params
+      );
 
-      if (response.code === 0 && response.data) {
-        // 处理可能的嵌套结构
-        if (Array.isArray(response.data)) {
+      hilog.info(0x0000, 'ArticleDetail', `Comments response code: ${response.code}`);
+
+      if (response.code === 0) {
+        // 处理新的响应结构
+        if (response.commentThreadParents && Array.isArray(response.commentThreadParents)) {
+          this.comments = response.commentThreadParents;
+          
+          // 更新分页信息
+          if (response.pagination) {
+            this.commentPageCount = response.pagination.paginationPageCount;
+          }
+          
+          hilog.info(0x0000, 'ArticleDetail', `Loaded ${this.comments.length} comments`);
+        } else if (response.data && Array.isArray(response.data)) {
+          // 兼容旧格式
           this.comments = response.data;
         } else {
-          // 可能是嵌套结构 { comments: [...] }
-          const data = response.data as Record<string, Comment[]>;
-          if (data.comments && Array.isArray(data.comments)) {
-            this.comments = data.comments;
-          } else {
-            this.comments = [];
-          }
+          this.comments = [];
         }
       } else {
+        hilog.error(0x0000, 'ArticleDetail', `Comments error: ${response.msg}`);
         this.comments = [];
       }
     } catch (err) {
+      hilog.error(0x0000, 'ArticleDetail', `Load comments error: ${JSON.stringify(err)}`);
       this.comments = [];
     }
   }
@@ -219,21 +241,10 @@ struct ArticleDetailPage {
       const params = new Map<string, string>();
       params.set('articleId', this.articleId);
       params.set('commentContent', content);
-      
-      // 添加匿名和私密选项
-      if (this.isAnonymous) {
-        params.set('commentAnonymous', '1');
-      }
-      if (this.isPrivate) {
-        params.set('commentVisibleOnlyToAuthor', '1');
-      }
-      
       const response = await HttpUtil.post<ApiResponse>('/comment', params);
 
       if (response.code === 0) {
         this.commentText = '';
-        this.isAnonymous = false;
-        this.isPrivate = false;
         // 重新加载评论
         await this.loadComments();
       }
@@ -245,105 +256,26 @@ struct ArticleDetailPage {
   }
 
   /**
-   * 点赞评论（支持取消）
+   * 点赞评论
    */
   private async likeComment(commentId: string): Promise<void> {
     try {
-      // 找到评论，判断当前点赞状态
-      const index = this.comments.findIndex(c => c.oId === commentId);
-      if (index === -1) return;
-      
-      const comment = this.comments[index];
-      if (!comment) return;
-      
-      const isLiked = comment.commentVote === 1;
-      
       const params = new Map<string, string>();
       params.set('dataId', commentId);
-      
-      // 根据当前状态决定是点赞还是取消
-      const endpoint = isLiked ? '/vote/down/comment' : '/vote/up/comment';
-      const response = await HttpUtil.post<ApiResponse>(endpoint, params);
+      const response = await HttpUtil.post<ApiResponse>('/vote/up/comment', params);
 
       if (response.code === 0) {
-        // 更新评论点赞状态
-        const targetComment = this.comments[index];
-        if (targetComment) {
-          if (isLiked) {
-            // 取消点赞
-            targetComment.commentVote = 0;
-            if (targetComment.commentGoodCnt !== undefined) {
-              targetComment.commentGoodCnt--;
-            }
-          } else {
-            // 点赞
-            targetComment.commentVote = 1;
-            if (targetComment.commentGoodCnt !== undefined) {
-              targetComment.commentGoodCnt++;
-            } else {
-              targetComment.commentGoodCnt = 1;
-            }
+        // 更新评论点赞数
+        const index = this.comments.findIndex(c => c.oId === commentId);
+        if (index !== -1) {
+          if (!this.comments[index].commentGoodCnt) {
+            this.comments[index].commentGoodCnt = 0;
           }
+          this.comments[index].commentGoodCnt!++;
         }
       }
     } catch (err) {
-      hilog.error(0x0000, 'ArticleDetail', `Like comment error: ${JSON.stringify(err)}`);
-    }
-  }
-
-  /**
-   * 回复评论
-   */
-  private async replyComment(): Promise<void> {
-    if (!this.replyingToComment || !this.replyText.trim()) return;
-    
-    this.isSendingReply = true;
-    
-    try {
-      const params = new Map<string, string>();
-      params.set('articleId', this.articleId);
-      params.set('commentContent', this.replyText.trim());
-      params.set('commentParentCommentId', this.replyingToComment.oId);
-      
-      const response = await HttpUtil.post<ReplyResponse>('/comment', params);
-      
-      if (response.code === 0) {
-        hilog.info(0x0000, 'ArticleDetail', 'Reply sent successfully');
-        this.replyText = '';
-        this.replyingToComment = null;
-        // 重新加载评论
-        await this.loadComments();
-      } else {
-        hilog.error(0x0000, 'ArticleDetail', `Reply failed: ${response.msg}`);
-      }
-    } catch (err) {
-      hilog.error(0x0000, 'ArticleDetail', `Reply error: ${JSON.stringify(err)}`);
-    } finally {
-      this.isSendingReply = false;
-    }
-  }
-
-  /**
-   * 删除评论
-   */
-  private async deleteComment(commentId: string): Promise<void> {
-    try {
-      const params = new Map<string, string>();
-      params.set('oId', commentId);
-      
-      const response = await HttpUtil.post<ApiResponse>('/comment/remove', params);
-      
-      if (response.code === 0) {
-        hilog.info(0x0000, 'ArticleDetail', 'Comment deleted successfully');
-        this.showDeleteDialog = false;
-        this.deletingCommentId = '';
-        // 重新加载评论
-        await this.loadComments();
-      } else {
-        hilog.error(0x0000, 'ArticleDetail', `Delete failed: ${response.msg}`);
-      }
-    } catch (err) {
-      hilog.error(0x0000, 'ArticleDetail', `Delete error: ${JSON.stringify(err)}`);
+      // 点赞评论失败
     }
   }
 
@@ -352,32 +284,19 @@ struct ArticleDetailPage {
    */
   private async thankComment(commentId: string): Promise<void> {
     try {
-      const params = new Map<string, string>();
-      params.set('dataId', commentId);
-      
-      const response = await HttpUtil.post<ApiResponse>('/comment/thank', params);
-      
+      const response = await HttpUtil.post<ApiResponse>(`/comment/thank?commentId=${commentId}`);
+
       if (response.code === 0) {
-        hilog.info(0x0000, 'ArticleDetail', 'Thank sent successfully');
-        // 更新感谢数
+        // 更新评论感谢数
         const index = this.comments.findIndex(c => c.oId === commentId);
         if (index !== -1) {
           this.comments[index].commentThankCnt++;
+          this.comments[index].rewarded = true;
         }
-      } else {
-        hilog.error(0x0000, 'ArticleDetail', `Thank failed: ${response.msg}`);
       }
     } catch (err) {
-      hilog.error(0x0000, 'ArticleDetail', `Thank error: ${JSON.stringify(err)}`);
+      // 感谢评论失败
     }
-  }
-
-  /**
-   * 取消回复
-   */
-  private cancelReply(): void {
-    this.replyingToComment = null;
-    this.replyText = '';
   }
 
   build() {
@@ -428,7 +347,7 @@ struct ArticleDetailPage {
           ListItem() {
             Column() {
               // 标题
-              Text(this.article!.articleTitle)
+              Text(processText(this.article!.articleTitle))
                 .fontSize(22)
                 .fontWeight(FontWeight.Bold)
                 .fontColor('#333333')
@@ -511,12 +430,31 @@ struct ArticleDetailPage {
           // 文章内容
           ListItem() {
             Column() {
-              RichTextView({
-                htmlContent: this.article!.articleContent,
-                fontSize: 16,
-                fontColor: '#333333',
-                containerWidth: 350
-              })
+              if (!this.shouldRenderContent) {
+                // 内容加载中状态
+                Column() {
+                  LoadingProgress()
+                    .width(30)
+                    .height(30)
+                  Text('内容加载中...')
+                    .fontSize(12)
+                    .fontColor('#999999')
+                    .margin({ top: 8 })
+                }
+                .width('100%')
+                .height(200)
+                .justifyContent(FlexAlign.Center)
+              } else if (this.useMarkdown) {
+                // 使用 @luvi/lv-markdown-in 渲染 Markdown 内容
+                Markdown({ 
+                  controller: this.markdownController,
+                  text: processText(this.article!.articleOriginalContent || '')
+                })
+              } else {
+                // 使用 RichText 渲染 HTML 内容（性能更好）
+                RichText(processText(this.article!.articleContent || '暂无内容'))
+                  .width('100%')
+              }
             }
             .width('100%')
             .padding({ left: 16, right: 16, top: 8, bottom: 8 })
@@ -556,15 +494,53 @@ struct ArticleDetailPage {
             .backgroundColor('#FAFAFA')
           }
 
-          // 评论区标题
+          // 评论区标题和筛选
           ListItem() {
-            Text(`评论 (${this.comments.length})`)
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
-              .fontColor('#333333')
+            Column() {
+              Row() {
+                Text(`评论 (${this.comments.length})`)
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor('#333333')
+                
+                Blank()
+                
+                // 排序按钮
+                Row() {
+                  Text(this.commentSort === 'hot' ? '🔥 热门' : '🕐 最新')
+                    .fontSize(12)
+                    .fontColor('#1890FF')
+                    .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                    .backgroundColor('#E6F7FF')
+                    .borderRadius(4)
+                    .onClick(async () => {
+                      this.commentSort = this.commentSort === 'hot' ? '' : 'hot';
+                      this.commentPage = 1;
+                      await this.loadComments();
+                    })
+                  
+                  // 只看楼主
+                  if (this.article && this.article.articleAuthorId) {
+                    Text(this.onlyAuthor ? '👤 只看楼主' : '👥 全部')
+                      .fontSize(12)
+                      .fontColor(this.onlyAuthor ? '#1890FF' : '#666666')
+                      .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                      .backgroundColor(this.onlyAuthor ? '#E6F7FF' : '#F5F5F5')
+                      .borderRadius(4)
+                      .margin({ left: 8 })
+                      .onClick(async () => {
+                        this.onlyAuthor = !this.onlyAuthor;
+                        this.commentPage = 1;
+                        await this.loadComments();
+                      })
+                  }
+                }
+              }
               .width('100%')
-              .padding(16)
-              .backgroundColor('#FFFFFF')
+            }
+            .width('100%')
+            .padding(16)
+            .backgroundColor('#FFFFFF')
           }
 
           // 评论列表
@@ -579,67 +555,30 @@ struct ArticleDetailPage {
         .backgroundColor('#FFFFFF')
 
         // 评论输入框
-        Column() {
-          Row() {
-            TextInput({ placeholder: '写下你的评论...', text: this.commentText })
-              .type(InputType.Normal)
-              .layoutWeight(1)
-              .height(40)
-              .backgroundColor('#F5F5F5')
-              .borderRadius(20)
-              .padding({ left: 16, right: 16 })
-              .onChange((value: string) => {
-                this.commentText = value;
-              })
+        Row() {
+          TextInput({ placeholder: '写下你的评论...', text: this.commentText })
+            .type(InputType.Normal)
+            .layoutWeight(1)
+            .height(40)
+            .backgroundColor('#F5F5F5')
+            .borderRadius(20)
+            .padding({ left: 16, right: 16 })
+            .onChange((value: string) => {
+              this.commentText = value;
+            })
 
-            Button('发送')
-              .type(ButtonType.Capsule)
-              .height(40)
-              .width(70)
-              .backgroundColor('#1890FF')
-              .fontColor('#FFFFFF')
-              .fontSize(14)
-              .margin({ left: 12 })
-              .enabled(!this.isSendingComment && this.commentText.trim().length > 0)
-              .onClick(() => {
-                this.postComment();
-              })
-          }
-          .width('100%')
-          
-          // 匿名和私密选项
-          Row() {
-            Row() {
-              Toggle({ type: ToggleType.Checkbox, isOn: this.isAnonymous })
-                .onChange((isOn: boolean) => {
-                  this.isAnonymous = isOn;
-                })
-                .width(16)
-                .height(16)
-              
-              Text('匿名')
-                .fontSize(12)
-                .fontColor('#666666')
-                .margin({ left: 4 })
-            }
-            .margin({ right: 16 })
-            
-            Row() {
-              Toggle({ type: ToggleType.Checkbox, isOn: this.isPrivate })
-                .onChange((isOn: boolean) => {
-                  this.isPrivate = isOn;
-                })
-                .width(16)
-                .height(16)
-              
-              Text('仅楼主可见')
-                .fontSize(12)
-                .fontColor('#666666')
-                .margin({ left: 4 })
-            }
-          }
-          .width('100%')
-          .margin({ top: 8 })
+          Button('发送')
+            .type(ButtonType.Capsule)
+            .height(40)
+            .width(70)
+            .backgroundColor('#1890FF')
+            .fontColor('#FFFFFF')
+            .fontSize(14)
+            .margin({ left: 12 })
+            .enabled(!this.isSendingComment && this.commentText.trim().length > 0)
+            .onClick(() => {
+              this.postComment();
+            })
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 8, bottom: 8 })
@@ -650,16 +589,6 @@ struct ArticleDetailPage {
     .width('100%')
     .height('100%')
     .padding({ top: this.getUIContext().px2vp(this.topRectHeight) })
-    .bindSheet($$this.showDeleteDialog, this.DeleteDialog(), {
-      height: 200,
-      backgroundColor: Color.White,
-      dragBar: false
-    })
-    .bindSheet($$this.showThankDialog, this.ThankDialog(), {
-      height: 200,
-      backgroundColor: Color.White,
-      dragBar: false
-    })
   }
 
   /**
@@ -670,48 +599,67 @@ struct ArticleDetailPage {
     Column() {
       // 评论头部
       Row() {
-        Image(comment.commentAuthorAvatarURL || '')
-          .width(32)
-          .height(32)
-          .borderRadius(16)
+        Image(comment.commentAuthorThumbnailURL || comment.commentAuthorAvatarURL || '')
+          .width(36)
+          .height(36)
+          .borderRadius(18)
           .backgroundColor('#E8E8E8')
 
         Column() {
-          Text(comment.commentAuthorName)
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#333333')
+          Row() {
+            Text(comment.commentAuthorNickName || comment.commentAuthorName)
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#333333')
+            
+            // 楼主标识
+            if (comment.commentIsArticleAuthor) {
+              Text('楼主')
+                .fontSize(10)
+                .fontColor('#FFFFFF')
+                .backgroundColor('#FF6B6B')
+                .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+                .borderRadius(2)
+                .margin({ left: 6 })
+            }
+          }
 
-          Text(TimeUtil.formatTime(comment.commentCreateTime || ''))
+          Text(comment.timeAgo || TimeUtil.formatTime(comment.commentCreateTime || ''))
             .fontSize(12)
             .fontColor('#999999')
         }
         .alignItems(HorizontalAlign.Start)
         .margin({ left: 10 })
+        
+        Blank()
+        
+        // 感谢数
+        if (comment.commentThankCnt > 0) {
+          Text(`🙏 ${comment.commentThankCnt}`)
+            .fontSize(12)
+            .fontColor('#999999')
+        }
       }
       .width('100%')
 
       // 评论内容
-      RichTextView({
-        htmlContent: comment.commentContent,
-        fontSize: 14,
-        fontColor: '#333333',
-        containerWidth: 300
-      })
+      Text(undefined, { controller: this.getCommentController(comment.oId) })
         .width('100%')
         .margin({ top: 10 })
+        .onAppear(() => {
+          this.renderCommentContent(comment);
+        })
 
       // 评论操作
       Row() {
-        // 点赞（根据commentVote判断状态）
+        // 点赞
         Row() {
-          Text(comment.commentVote === 1 ? '👍' : '👍')
+          Text('👍')
             .fontSize(14)
-            .fontColor(comment.commentVote === 1 ? '#1890FF' : '#666666')
           if (comment.commentGoodCnt && comment.commentGoodCnt > 0) {
             Text(comment.commentGoodCnt.toString())
               .fontSize(12)
-              .fontColor(comment.commentVote === 1 ? '#1890FF' : '#999999')
+              .fontColor('#999999')
               .margin({ left: 4 })
           }
         }
@@ -730,100 +678,51 @@ struct ArticleDetailPage {
               .margin({ left: 4 })
           }
         }
-        .margin({ left: 16 })
+        .margin({ left: 20 })
         .onClick(() => {
-          // 显示感谢确认弹窗
-          if (comment.commentThankLabel) {
-            this.thankLabel = comment.commentThankLabel;
-            this.thankingCommentId = comment.oId;
-            this.showThankDialog = true;
-          } else {
-            this.thankComment(comment.oId);
-          }
+          this.thankComment(comment.oId);
         })
 
-        // 回复
-        Row() {
-          Text('💬')
-            .fontSize(14)
-          Text('回复')
+        // 回复数
+        if (comment.commentThreadReplyCount && comment.commentThreadReplyCount > 0) {
+          Text(`💬 ${comment.commentThreadReplyCount}`)
             .fontSize(12)
-            .fontColor('#666666')
-            .margin({ left: 4 })
+            .fontColor('#999999')
+            .margin({ left: 20 })
         }
-        .margin({ left: 16 })
-        .onClick(() => {
-          this.replyingToComment = comment;
-        })
 
-        // 删除（仅自己的评论）
-        if (comment.commentIsCurrentUser) {
-          Row() {
-            Text('🗑️')
-              .fontSize(14)
-          }
-          .margin({ left: 16 })
-          .onClick(() => {
-            this.deletingCommentId = comment.oId;
-            this.showDeleteDialog = true;
-          })
-        }
+        // 回复按钮
+        Text('回复')
+          .fontSize(12)
+          .fontColor('#1890FF')
+          .margin({ left: 20 })
       }
-      .width('100%')
       .margin({ top: 10 })
 
-      // 回复输入框（当正在回复此评论时显示）
-      if (this.replyingToComment && this.replyingToComment.oId === comment.oId) {
+      // 回复预览列表
+      if (comment.commentThreadReplies && comment.commentThreadReplies.length > 0) {
         Column() {
-          Row() {
-            Text(`回复 @${comment.commentAuthorName}`)
+          ForEach(comment.commentThreadReplies, (reply: CommentThreadReply) => {
+            this.ReplyItem(reply, comment.commentAuthorName)
+          }, (reply: CommentThreadReply) => reply.oId)
+          
+          // 查看更多回复
+          if (comment.commentThreadHasMore) {
+            Text(`查看更多 ${comment.commentThreadReplyCount! - comment.commentThreadReplies!.length} 条回复`)
               .fontSize(12)
-              .fontColor('#666666')
-            
-            Blank()
-            
-            Text('取消')
-              .fontSize(12)
-              .fontColor('#999999')
+              .fontColor('#1890FF')
+              .width('100%')
+              .padding({ top: 8, bottom: 8 })
               .onClick(() => {
-                this.cancelReply();
+                // TODO: 跳转到回复详情页
               })
           }
-          .width('100%')
-          .margin({ bottom: 8 })
-
-          Row() {
-            TextInput({ placeholder: '写下你的回复...', text: this.replyText })
-              .type(InputType.Normal)
-              .layoutWeight(1)
-              .height(36)
-              .backgroundColor('#F5F5F5')
-              .borderRadius(18)
-              .padding({ left: 12, right: 12 })
-              .onChange((value: string) => {
-                this.replyText = value;
-              })
-
-            Button('发送')
-              .type(ButtonType.Capsule)
-              .height(36)
-              .width(60)
-              .backgroundColor('#1890FF')
-              .fontColor('#FFFFFF')
-              .fontSize(13)
-              .margin({ left: 8 })
-              .enabled(!this.isSendingReply && this.replyText.trim().length > 0)
-              .onClick(() => {
-                this.replyComment();
-              })
-          }
-          .width('100%')
         }
         .width('100%')
-        .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-        .backgroundColor('#F0F7FF')
-        .borderRadius(8)
         .margin({ top: 12 })
+        .padding({ left: 0, top: 8, bottom: 8 })
+        .backgroundColor('#F8F8F8')
+        .borderRadius(8)
       }
     }
     .width('100%')
@@ -833,109 +732,157 @@ struct ArticleDetailPage {
   }
 
   /**
-   * 删除确认弹窗
+   * 获取或创建评论的TextController
    */
-  @Builder
-  DeleteDialog() {
-    Column() {
-      Text('确认删除')
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor('#333333')
-        .margin({ top: 20 })
-
-      Text('删除后无法恢复，确定要删除这条评论吗？')
-        .fontSize(14)
-        .fontColor('#666666')
-        .margin({ top: 16 })
-
-      Row() {
-        Button('取消')
-          .type(ButtonType.Capsule)
-          .height(40)
-          .layoutWeight(1)
-          .backgroundColor('#F5F5F5')
-          .fontColor('#666666')
-          .onClick(() => {
-            this.showDeleteDialog = false;
-            this.deletingCommentId = '';
-          })
-
-        Button('删除')
-          .type(ButtonType.Capsule)
-          .height(40)
-          .layoutWeight(1)
-          .backgroundColor('#FF4D4F')
-          .fontColor('#FFFFFF')
-          .margin({ left: 12 })
-          .onClick(() => {
-            if (this.deletingCommentId) {
-              this.deleteComment(this.deletingCommentId);
-            }
-          })
-      }
-      .width('100%')
-      .padding({ left: 24, right: 24 })
-      .margin({ top: 24 })
+  private getCommentController(commentId: string): TextController {
+    let controller = this.commentControllers.get(commentId);
+    if (!controller) {
+      controller = new TextController();
+      this.commentControllers.set(commentId, controller);
     }
-    .width('100%')
-    .height(200)
-    .backgroundColor('#FFFFFF')
-    .borderRadius({ topLeft: 16, topRight: 16 })
+    return controller;
   }
 
   /**
-   * 感谢确认弹窗
+   * 使用StyledString.fromHtml渲染评论内容
+   */
+  private async renderCommentContent(comment: Comment): Promise<void> {
+    try {
+      const htmlContent = processCommentHtml(comment.commentContent);
+      const styledString = await StyledString.fromHtml(htmlContent);
+      const controller = this.commentControllers.get(comment.oId);
+      if (controller) {
+        controller.setStyledString(styledString);
+      }
+    } catch (err) {
+      hilog.error(0x0000, 'ArticleDetail', `Render comment error: ${JSON.stringify(err)}`);
+    }
+  }
+
+  /**
+   * 获取或创建回复的TextController
+   */
+  private getReplyController(replyId: string): TextController {
+    let controller = this.replyControllers.get(replyId);
+    if (!controller) {
+      controller = new TextController();
+      this.replyControllers.set(replyId, controller);
+    }
+    return controller;
+  }
+
+  /**
+   * 使用StyledString.fromHtml渲染回复内容
+   */
+  private async renderReplyContent(reply: CommentThreadReply): Promise<void> {
+    try {
+      const htmlContent = processCommentHtml(reply.commentContent);
+      const styledString = await StyledString.fromHtml(htmlContent);
+      const controller = this.replyControllers.get(reply.oId);
+      if (controller) {
+        controller.setStyledString(styledString);
+      }
+    } catch (err) {
+      hilog.error(0x0000, 'ArticleDetail', `Render reply error: ${JSON.stringify(err)}`);
+    }
+  }
+
+  /**
+   * 加载更多回复
+   */
+  private async loadMoreReplies(commentId: string): Promise<void> {
+    if (this.loadingRepliesCommentId === commentId) return; // 防止重复加载
+
+    this.loadingRepliesCommentId = commentId;
+
+    try {
+      // 获取当前评论
+      const commentIndex = this.comments.findIndex(c => c.oId === commentId);
+      if (commentIndex === -1) return;
+
+      const comment = this.comments[commentIndex];
+      const currentReplyCount = comment.commentThreadReplies?.length || 0;
+
+      // 调用API加载更多回复
+      const params = new Map<string, string>();
+      params.set('commentId', commentId);
+      params.set('page', String(Math.floor(currentReplyCount / 10) + 1));
+
+      const response = await HttpUtil.post<ReplyListResponse>('/comment/thread/replies', params);
+
+      if (response.code === 0 && response.commentThreadReplies) {
+        // 追加新回复到当前评论
+        if (!this.comments[commentIndex].commentThreadReplies) {
+          this.comments[commentIndex].commentThreadReplies = [];
+        }
+
+        // 合并新回复（避免重复）
+        const existingIds = new Set(this.comments[commentIndex].commentThreadReplies!.map(r => r.oId));
+        const newReplies: CommentThreadReply[] = response.commentThreadReplies.filter((r: CommentThreadReply) => !existingIds.has(r.oId));
+        for (let i = 0; i < newReplies.length; i++) {
+          this.comments[commentIndex].commentThreadReplies!.push(newReplies[i]);
+        }
+
+        // 更新是否有更多回复的标志
+        if (response.pagination) {
+          const totalLoaded = this.comments[commentIndex].commentThreadReplies!.length;
+          this.comments[commentIndex].commentThreadHasMore = totalLoaded < (comment.commentThreadReplyCount || 0);
+        }
+
+        hilog.info(0x0000, 'ArticleDetail', `Loaded ${newReplies.length} more replies for comment ${commentId}`);
+      }
+    } catch (err) {
+      hilog.error(0x0000, 'ArticleDetail', `Load more replies error: ${JSON.stringify(err)}`);
+    } finally {
+      this.loadingRepliesCommentId = '';
+    }
+  }
+
+  /**
+   * 回复项组件
    */
   @Builder
-  ThankDialog() {
-    Column() {
-      Text('确认感谢')
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor('#333333')
-        .margin({ top: 20 })
+  ReplyItem(reply: CommentThreadReply, rootAuthorName: string) {
+    Row() {
+      // 回复者头像
+      Image(reply.commentAuthorThumbnailURL || '')
+        .width(24)
+        .height(24)
+        .borderRadius(12)
+        .backgroundColor('#E8E8E8')
 
-      Text(this.thankLabel || '确定要感谢这条评论吗？将赠送15积分给对方。')
-        .fontSize(14)
-        .fontColor('#666666')
-        .margin({ top: 16, left: 24, right: 24 })
-        .textAlign(TextAlign.Center)
-
-      Row() {
-        Button('取消')
-          .type(ButtonType.Capsule)
-          .height(40)
-          .layoutWeight(1)
-          .backgroundColor('#F5F5F5')
-          .fontColor('#666666')
-          .onClick(() => {
-            this.showThankDialog = false;
-            this.thankingCommentId = '';
-          })
-
-        Button('确认')
-          .type(ButtonType.Capsule)
-          .height(40)
-          .layoutWeight(1)
-          .backgroundColor('#1890FF')
-          .fontColor('#FFFFFF')
-          .margin({ left: 12 })
-          .onClick(() => {
-            if (this.thankingCommentId) {
-              this.thankComment(this.thankingCommentId);
-              this.showThankDialog = false;
-              this.thankingCommentId = '';
-            }
+      Column() {
+        Row() {
+          Text(reply.commentAuthorNickName || reply.commentAuthorName)
+            .fontSize(12)
+            .fontColor('#333333')
+          
+          // 楼主标识
+          if (reply.commentIsArticleAuthor) {
+            Text('楼主')
+              .fontSize(9)
+              .fontColor('#FFFFFF')
+              .backgroundColor('#FF6B6B')
+              .padding({ left: 3, right: 3, top: 1, bottom: 1 })
+              .borderRadius(2)
+              .margin({ left: 4 })
+          }
+        }
+        
+        // 回复内容（简化显示）
+        Text(undefined, { controller: this.getReplyController(reply.oId) })
+          .width('100%')
+          .margin({ top: 4 })
+          .onAppear(() => {
+            this.renderReplyContent(reply);
           })
       }
-      .width('100%')
-      .padding({ left: 24, right: 24 })
-      .margin({ top: 24 })
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      .margin({ left: 8 })
     }
     .width('100%')
-    .height(200)
-    .backgroundColor('#FFFFFF')
-    .borderRadius({ topLeft: 16, topRight: 16 })
+    .padding({ top: 6, bottom: 6 })
+    .alignItems(VerticalAlign.Top)
   }
 }

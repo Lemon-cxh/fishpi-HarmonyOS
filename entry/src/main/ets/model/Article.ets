@@ -6,7 +6,7 @@ export interface Article {
   articleTitle: string;                     // 标题
   articleTitleEmoj?: string;                // 标题（带emoji）
   articleContent: string;                   // 内容（HTML）
-  articleOriginalContent?: string;          // 内容（Markdown 原始格式）
+  articleOriginalContent: string;           // 内容（Markdown 原始格式）
   articleAbstract: string;                  // 摘要
   articlePreviewContent?: string;           // 预览内容
   articleTags: string;                      // 标签，逗号分隔
@@ -113,9 +113,6 @@ export interface CommentThreadReply {
   commentIsArticleAuthor?: boolean;      // 是否为楼主
   commentThankCnt?: number;              // 感谢数
   commentVote?: number;                  // 投票状态
-  commentOriginalCommentId?: string;     // 被回复的评论ID
-  commentOriginalAuthorName?: string;    // 被回复评论作者用户名
-  commentOriginalAuthorNickName?: string; // 被回复评论作者昵称
 }
 
 /**
