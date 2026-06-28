@@ -464,6 +464,8 @@ struct ArticleDetailPage {
                     }
                   }, (tag: string, index: number) => `${index}-${tag}`)
                 }
+                .justifyContent(FlexAlign.Start)
+                .width('100%')
                 .margin({ top: 12 })
               }
             }
