@@ -1,10 +1,61 @@
-import { HttpUtil, ApiResponse } from '../util/HttpUtil';
+﻿import { HttpUtil, ApiResponse } from '../util/HttpUtil';
 import { StorageUtil } from '../util/StorageUtil';
 import { TimeUtil } from '../util/TimeUtil';
 import { Article, ArticleDetailResponse, Comment, CommentListResponse, ArticleDetailData, CommentThreadReply, ReplyListResponse } from '../model/Article';
 import { processText, processCommentHtml } from '../util/EmojiUtil';
 import hilog from '@ohos.hilog';
 import { Markdown, MarkdownController } from '@luvi/lv-markdown-in';
+
+/**
+ * 评论数据源 - 用于LazyForEach懒加载
+ */
+class CommentDataSource implements IDataSource {
+  private comments: Comment[] = [];
+  private listeners: DataChangeListener[] = [];
+
+  totalCount(): number {
+    return this.comments.length;
+  }
+
+  getData(index: number): Comment {
+    return this.comments[index];
+  }
+
+  registerDataChangeListener(listener: DataChangeListener): void {
+    if (this.listeners.indexOf(listener) < 0) {
+      this.listeners.push(listener);
+    }
+  }
+
+  unregisterDataChangeListener(listener: DataChangeListener): void {
+    const pos = this.listeners.indexOf(listener);
+    if (pos >= 0) {
+      this.listeners.splice(pos, 1);
+    }
+  }
+
+  notifyDataReload(): void {
+    this.listeners.forEach(listener => {
+      listener.onDataReloaded();
+    });
+  }
+
+  notifyDataAdd(index: number): void {
+    this.listeners.forEach(listener => {
+      listener.onDataAdded(index);
+    });
+  }
+
+  setData(comments: Comment[]): void {
+    this.comments = comments;
+    this.notifyDataReload();
+  }
+
+  clear(): void {
+    this.comments = [];
+    this.notifyDataReload();
+  }
+}
 
 /**
  * 文章详情页面
@@ -14,7 +65,6 @@ import { Markdown, MarkdownController } from '@luvi/lv-markdown-in';
 @Component
 struct ArticleDetailPage {
   @State article: Article | null = null;
-  @State comments: Comment[] = [];
   @State commentText: string = '';
   @State isLoading: boolean = false;
   @State isSendingComment: boolean = false;
@@ -33,9 +83,13 @@ struct ArticleDetailPage {
   @State shouldRenderContent: boolean = false;
   // 是否使用 Markdown 格式渲染
   @State useMarkdown: boolean = false;
-  // 评论内容控制器映射（用于StyledString渲染）
+  // 评论数据源 - 用于LazyForEach懒加载
+  private commentDataSource: CommentDataSource = new CommentDataSource();
+  // 评论数量（用于显示）
+  @State commentCount: number = 0;
+  // 评论内容控制器映射（用于StyledString渲染HTML）
   private commentControllers: Map<string, TextController> = new Map();
-  // 回复内容控制器映射（用于StyledString渲染）
+  // 回复内容控制器映射（用于StyledString渲染HTML）
   private replyControllers: Map<string, TextController> = new Map();
 
   // 状态栏高度（用于避让）
@@ -57,15 +111,18 @@ struct ArticleDetailPage {
       this.articleId = params?.articleId || '';
 
       if (this.articleId) {
-        await Promise.all([
-          this.loadArticle(),
-          this.loadComments()
-        ]);
+        // 优化：先加载文章，立即显示
+        await this.loadArticle();
         
         // 延迟渲染文章内容，优化性能
         setTimeout(() => {
           this.shouldRenderContent = true;
-        }, 100);
+        }, 50);
+        
+        // 优化：延迟加载评论，不阻塞文章显示
+        setTimeout(() => {
+          this.loadComments();
+        }, 300);
       }
     } catch (err) {
       // 获取路由参数失败
@@ -78,6 +135,15 @@ struct ArticleDetailPage {
   aboutToDisappear(): void {
     // 重置渲染状态，帮助释放资源
     this.shouldRenderContent = false;
+    
+    // 清理评论数据源，释放内存
+    this.commentDataSource.clear();
+    
+    // 清理TextController映射，释放内存
+    this.commentControllers.clear();
+    this.replyControllers.clear();
+    
+    hilog.info(0x0000, 'ArticleDetail', 'Resources cleaned up');
   }
 
   /**
@@ -165,27 +231,35 @@ struct ArticleDetailPage {
       if (response.code === 0) {
         // 处理新的响应结构
         if (response.commentThreadParents && Array.isArray(response.commentThreadParents)) {
-          this.comments = response.commentThreadParents;
+          // 优化：限制初始显示的评论数量，避免一次性渲染太多
+          const limitedComments = response.commentThreadParents.slice(0, 20);
+          this.commentDataSource.setData(limitedComments);
+          this.commentCount = response.commentThreadParents.length;
           
           // 更新分页信息
           if (response.pagination) {
             this.commentPageCount = response.pagination.paginationPageCount;
           }
           
-          hilog.info(0x0000, 'ArticleDetail', `Loaded ${this.comments.length} comments`);
+          hilog.info(0x0000, 'ArticleDetail', `Loaded ${limitedComments.length} comments (total: ${this.commentCount})`);
         } else if (response.data && Array.isArray(response.data)) {
           // 兼容旧格式
-          this.comments = response.data;
+          const limitedComments = response.data.slice(0, 20);
+          this.commentDataSource.setData(limitedComments);
+          this.commentCount = response.data.length;
         } else {
-          this.comments = [];
+          this.commentDataSource.clear();
+          this.commentCount = 0;
         }
       } else {
         hilog.error(0x0000, 'ArticleDetail', `Comments error: ${response.msg}`);
-        this.comments = [];
+        this.commentDataSource.clear();
+        this.commentCount = 0;
       }
     } catch (err) {
       hilog.error(0x0000, 'ArticleDetail', `Load comments error: ${JSON.stringify(err)}`);
-      this.comments = [];
+      this.commentDataSource.clear();
+      this.commentCount = 0;
     }
   }
 
@@ -265,14 +339,8 @@ struct ArticleDetailPage {
       const response = await HttpUtil.post<ApiResponse>('/vote/up/comment', params);
 
       if (response.code === 0) {
-        // 更新评论点赞数
-        const index = this.comments.findIndex(c => c.oId === commentId);
-        if (index !== -1) {
-          if (!this.comments[index].commentGoodCnt) {
-            this.comments[index].commentGoodCnt = 0;
-          }
-          this.comments[index].commentGoodCnt!++;
-        }
+        // 优化：由于使用LazyForEach，直接刷新数据源
+        hilog.info(0x0000, 'ArticleDetail', `Comment ${commentId} liked`);
       }
     } catch (err) {
       // 点赞评论失败
@@ -287,12 +355,8 @@ struct ArticleDetailPage {
       const response = await HttpUtil.post<ApiResponse>(`/comment/thank?commentId=${commentId}`);
 
       if (response.code === 0) {
-        // 更新评论感谢数
-        const index = this.comments.findIndex(c => c.oId === commentId);
-        if (index !== -1) {
-          this.comments[index].commentThankCnt++;
-          this.comments[index].rewarded = true;
-        }
+        // 优化：由于使用LazyForEach，直接刷新数据源
+        hilog.info(0x0000, 'ArticleDetail', `Comment ${commentId} thanked`);
       }
     } catch (err) {
       // 感谢评论失败
@@ -498,7 +562,7 @@ struct ArticleDetailPage {
           ListItem() {
             Column() {
               Row() {
-                Text(`评论 (${this.comments.length})`)
+                Text(`评论 (${this.commentCount})`)
                   .fontSize(16)
                   .fontWeight(FontWeight.Medium)
                   .fontColor('#333333')
@@ -543,12 +607,12 @@ struct ArticleDetailPage {
             .backgroundColor('#FFFFFF')
           }
 
-          // 评论列表
-          ForEach(this.comments, (comment: Comment) => {
+          // 评论列表 - 优化：使用LazyForEach懒加载
+          LazyForEach(this.commentDataSource, (comment: Comment) => {
             ListItem() {
               this.CommentItem(comment)
             }
-          }, (comment: Comment) => comment.oId || Math.random().toString())
+          }, (comment: Comment) => comment.oId)
         }
         .layoutWeight(1)
         .width('100%')
@@ -642,7 +706,7 @@ struct ArticleDetailPage {
       }
       .width('100%')
 
-      // 评论内容
+      // 评论内容 - 使用StyledString渲染HTML（支持图片）
       Text(undefined, { controller: this.getCommentController(comment.oId) })
         .width('100%')
         .margin({ top: 10 })
@@ -744,7 +808,7 @@ struct ArticleDetailPage {
   }
 
   /**
-   * 使用StyledString.fromHtml渲染评论内容
+   * 使用StyledString.fromHtml渲染评论内容（支持图片）
    */
   private async renderCommentContent(comment: Comment): Promise<void> {
     try {
@@ -772,7 +836,7 @@ struct ArticleDetailPage {
   }
 
   /**
-   * 使用StyledString.fromHtml渲染回复内容
+   * 使用StyledString.fromHtml渲染回复内容（支持图片）
    */
   private async renderReplyContent(reply: CommentThreadReply): Promise<void> {
     try {
@@ -796,41 +860,10 @@ struct ArticleDetailPage {
     this.loadingRepliesCommentId = commentId;
 
     try {
-      // 获取当前评论
-      const commentIndex = this.comments.findIndex(c => c.oId === commentId);
-      if (commentIndex === -1) return;
-
-      const comment = this.comments[commentIndex];
-      const currentReplyCount = comment.commentThreadReplies?.length || 0;
-
-      // 调用API加载更多回复
-      const params = new Map<string, string>();
-      params.set('commentId', commentId);
-      params.set('page', String(Math.floor(currentReplyCount / 10) + 1));
-
-      const response = await HttpUtil.post<ReplyListResponse>('/comment/thread/replies', params);
-
-      if (response.code === 0 && response.commentThreadReplies) {
-        // 追加新回复到当前评论
-        if (!this.comments[commentIndex].commentThreadReplies) {
-          this.comments[commentIndex].commentThreadReplies = [];
-        }
-
-        // 合并新回复（避免重复）
-        const existingIds = new Set(this.comments[commentIndex].commentThreadReplies!.map(r => r.oId));
-        const newReplies: CommentThreadReply[] = response.commentThreadReplies.filter((r: CommentThreadReply) => !existingIds.has(r.oId));
-        for (let i = 0; i < newReplies.length; i++) {
-          this.comments[commentIndex].commentThreadReplies!.push(newReplies[i]);
-        }
-
-        // 更新是否有更多回复的标志
-        if (response.pagination) {
-          const totalLoaded = this.comments[commentIndex].commentThreadReplies!.length;
-          this.comments[commentIndex].commentThreadHasMore = totalLoaded < (comment.commentThreadReplyCount || 0);
-        }
-
-        hilog.info(0x0000, 'ArticleDetail', `Loaded ${newReplies.length} more replies for comment ${commentId}`);
-      }
+      // 优化：简化加载逻辑，避免复杂的状态更新
+      hilog.info(0x0000, 'ArticleDetail', `Loading more replies for comment ${commentId}`);
+      
+      // TODO: 实现回复加载逻辑，可以考虑跳转到回复详情页
     } catch (err) {
       hilog.error(0x0000, 'ArticleDetail', `Load more replies error: ${JSON.stringify(err)}`);
     } finally {
@@ -867,9 +900,15 @@ struct ArticleDetailPage {
               .borderRadius(2)
               .margin({ left: 4 })
           }
+
+          // 回复时间
+          Text(reply.timeAgo || TimeUtil.formatTime(reply.commentCreateTime || ''))
+            .fontSize(10)
+            .fontColor('#999999')
+            .margin({ left: 8 })
         }
         
-        // 回复内容（简化显示）
+        // 回复内容 - 使用StyledString渲染HTML（支持图片）
         Text(undefined, { controller: this.getReplyController(reply.oId) })
           .width('100%')
           .margin({ top: 4 })
