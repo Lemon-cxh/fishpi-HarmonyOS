@@ -60,6 +60,8 @@ export interface ArticleDetailData {
   articleAuthorId?: string;
   articleAuthorName?: string;
   articleAuthorAvatarURL?: string;
+  articleAuthorThumbnailURL48?: string;   // 作者头像48px
+  articleAuthorThumbnailURL210?: string;   // 作者头像210px
   articleCreateTime?: string;
   articleUpdateTime?: string;
   articleViewCount?: number;

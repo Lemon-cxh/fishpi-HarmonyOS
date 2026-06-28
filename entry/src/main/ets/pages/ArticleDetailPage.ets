@@ -175,7 +175,10 @@ struct ArticleDetailPage {
             articleTags: data.articleTags || '',
             articleAuthorId: data.articleAuthorId || '',
             articleAuthorName: data.articleAuthorName || '',
-            articleAuthorAvatarURL: data.articleAuthorAvatarURL || '',
+            // 优先使用 articleAuthorThumbnailURL48，兼容旧字段
+            articleAuthorAvatarURL: data.articleAuthorThumbnailURL48 || 
+                                    data.articleAuthorThumbnailURL210 || 
+                                    data.articleAuthorAvatarURL || '',
             articleCreateTime: data.articleCreateTime || '',
             articleUpdateTime: data.articleUpdateTime || '',
             articleViewCount: data.articleViewCount || 0,
