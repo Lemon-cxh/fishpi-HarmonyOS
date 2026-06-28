@@ -6,8 +6,11 @@
   "main": "",
   "author": "",
   "license": "Apache-2.0",
-  "dependencies": {},
+  "dependencies": {
+    "@luvi/lv-markdown-in": "^3.4.4"
+  },
   "devDependencies": {
     "@ohos/hypium": "1.0.6"
-  }
+  },
+  "dynamicDependencies": {}
 }

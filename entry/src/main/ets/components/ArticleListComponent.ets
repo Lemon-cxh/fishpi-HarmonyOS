@@ -1,6 +1,7 @@
 import { HttpUtil, ApiResponse } from '../util/HttpUtil';
 import { TimeUtil } from '../util/TimeUtil';
 import { Article, ArticleListResponse } from '../model/Article';
+import { processText } from '../util/EmojiUtil';
 
 /**
  * Tab配置接口
@@ -11,31 +12,30 @@ interface TabConfig {
 }
 
 /**
- * 文章列表页面
- * 展示最近、热门、精华、最近回复四类文章
+ * 文章列表组件
+ * 可嵌入到其他页面中使用
  */
-@Entry
 @Component
-struct ArticleListPage {
+export struct ArticleListComponent {
   @State articles: Article[] = [];
   @State currentTab: number = 0;
   @State currentPage: number = 1;
   @State isLoading: boolean = false;
   @State hasMore: boolean = true;
 
-  // 状态栏高度（用于避让）
-  @StorageProp('topRectHeight') topRectHeight: number = 0;
+  // 是否显示标题栏
+  @Prop showTitle: boolean = true;
 
   // Tab配置
   private tabs: TabConfig[] = [
     { title: '最近', path: '/api/articles/recent' },
     { title: '热门', path: '/api/articles/recent/hot' },
-    { title: '精华', path: '/api/articles/recent/good' },
+    { title: '点赞', path: '/api/articles/recent/good' },
     { title: '最近回复', path: '/api/articles/recent/reply' }
   ];
 
   /**
-   * 页面出现时加载数据
+   * 组件出现时加载数据
    */
   async aboutToAppear(): Promise<void> {
     await this.loadArticles();
@@ -109,19 +109,21 @@ struct ArticleListPage {
 
   build() {
     Column() {
-      // 顶部标题栏
-      Row() {
-        Text('文章')
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#333333')
+      // 顶部标题栏（可选）
+      if (this.showTitle) {
+        Row() {
+          Text('文章')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#333333')
 
-        Blank()
+          Blank()
+        }
+        .width('100%')
+        .height(56)
+        .padding({ left: 16, right: 16 })
+        .backgroundColor('#FFFFFF')
       }
-      .width('100%')
-      .height(56)
-      .padding({ left: 16, right: 16 })
-      .backgroundColor('#FFFFFF')
 
       // Tab栏
       Row() {
@@ -182,7 +184,6 @@ struct ArticleListPage {
     }
     .width('100%')
     .height('100%')
-    .padding({ top: this.getUIContext().px2vp(this.topRectHeight) })
   }
 
   /**
@@ -191,85 +192,37 @@ struct ArticleListPage {
   @Builder
   ArticleCard(article: Article) {
     Column() {
-      // 标题
-      Text(article.articleTitle)
+      // 标题（左对齐）
+      Text(processText(article.articleTitleEmoj || article.articleTitle))
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
         .fontColor('#333333')
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+        .textAlign(TextAlign.Start)
 
-      // 摘要
-      if (article.articleAbstract) {
-        Text(article.articleAbstract)
+      // 文章摘要
+      if (article.articleAbstract || article.articlePreviewContent) {
+        Text(processText(article.articleAbstract || article.articlePreviewContent || ''))
           .fontSize(14)
           .fontColor('#666666')
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
           .margin({ top: 8 })
+          .textAlign(TextAlign.Start)
       }
 
-      // 底部信息
-      Row() {
-        // 作者信息
-        Row() {
-          Image(article.articleAuthorAvatarURL || '')
-            .width(20)
-            .height(20)
-            .borderRadius(10)
-            .backgroundColor('#E8E8E8')
-
-          Text(article.articleAuthorName)
-            .fontSize(12)
-            .fontColor('#999999')
-            .margin({ left: 6 })
-        }
-
-        Blank()
-
-        // 统计信息
-        Row() {
-          // 浏览数
-          Row() {
-            Text('👁')
-              .fontSize(12)
-            Text(article.articleViewCount.toString())
-              .fontSize(12)
-              .fontColor('#999999')
-              .margin({ left: 4 })
-          }
-          .margin({ right: 16 })
-
-          // 评论数
-          Row() {
-            Text('💬')
-              .fontSize(12)
-            Text(article.articleCommentCount.toString())
-              .fontSize(12)
-              .fontColor('#999999')
-              .margin({ left: 4 })
-          }
-          .margin({ right: 16 })
-
-          // 点赞数
-          Row() {
-            Text('👍')
-              .fontSize(12)
-            Text(article.articleGoodCnt.toString())
-              .fontSize(12)
-              .fontColor('#999999')
-              .margin({ left: 4 })
-          }
-        }
-
-        // 时间
-        Text(TimeUtil.formatTime(article.articleCreateTime))
-          .fontSize(12)
-          .fontColor('#CCCCCC')
-          .margin({ left: 12 })
+      // 文章缩略图
+      if (article.articleThumbnailURL) {
+        Image(article.articleThumbnailURL)
+          .width('100%')
+          .height(180)
+          .objectFit(ImageFit.Cover)
+          .borderRadius(8)
+          .margin({ top: 12 })
       }
-      .width('100%')
-      .margin({ top: 12 })
 
       // 标签
       if (article.articleTags) {
@@ -280,18 +233,73 @@ struct ArticleListPage {
                 .fontSize(11)
                 .fontColor('#1890FF')
                 .backgroundColor('#E6F7FF')
-                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                .padding({ left: 8, right: 8, top: 3, bottom: 3 })
                 .borderRadius(4)
                 .margin({ right: 6 })
             }
           }, (tag: string) => tag)
         }
-        .margin({ top: 8 })
+        .width('100%')
+        .margin({ top: 10 })
+        .justifyContent(FlexAlign.Start)
       }
+
+      // 底部信息
+      Column() {
+        // 第一行：头像+用户名 | 统计信息
+        Row() {
+          // 左侧：头像+用户名
+          Row() {
+            Image(article.articleAuthorThumbnailURL48 || article.articleAuthorAvatarURL || '')
+              .width(24)
+              .height(24)
+              .borderRadius(12)
+              .backgroundColor('#F0F0F0')
+
+            Text(article.articleAuthorName)
+              .fontSize(13)
+              .fontColor('#666666')
+              .margin({ left: 8 })
+          }
+
+          Blank()
+
+          // 右侧：统计信息
+          Row() {
+            Text(`阅读 ${article.articleViewCntDisplayFormat || article.articleViewCount}`)
+              .fontSize(12)
+              .fontColor('#999999')
+              .margin({ right: 12 })
+
+            Text(`评论 ${article.articleCommentCount}`)
+              .fontSize(12)
+              .fontColor('#999999')
+              .margin({ right: 12 })
+
+            Text(`点赞 ${article.articleGoodCnt}`)
+              .fontSize(12)
+              .fontColor('#999999')
+          }
+        }
+        .width('100%')
+
+        // 第二行：时间
+        Row() {
+          Blank()
+          Text(article.timeAgo || TimeUtil.formatTime(article.articleCreateTime))
+            .fontSize(11)
+            .fontColor('#CCCCCC')
+        }
+        .width('100%')
+        .margin({ top: 4 })
+      }
+      .width('100%')
+      .margin({ top: 12 })
     }
     .width('100%')
     .padding(16)
     .backgroundColor('#FFFFFF')
+    .borderRadius(8)
     .margin({ bottom: 8 })
     .onClick(() => {
       this.goDetail(article.oId);

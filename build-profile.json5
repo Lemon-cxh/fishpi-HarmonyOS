@@ -1,6 +1,20 @@
 {
   "app": {
-    "signingConfigs": [],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\lemon\\.ohos\\config\\default_finshpi_Rl88HqU0O90cMKfzl0UAJOyl9WfKhd465-_6v6I2lXQ=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001931E2D482E3D2D22F90CAA32E51F7C8184214B1A57726172CFBE63B6C7CA45396E8088204F7",
+          "profile": "C:\\Users\\lemon\\.ohos\\config\\default_finshpi_Rl88HqU0O90cMKfzl0UAJOyl9WfKhd465-_6v6I2lXQ=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\lemon\\.ohos\\config\\default_finshpi_Rl88HqU0O90cMKfzl0UAJOyl9WfKhd465-_6v6I2lXQ=.p12",
+          "storePassword": "00000019239FBEA7D61F2CDCDFE35EF753D75064C2E838E94ABC24548522C32C49E536C4CB92768D7F"
+        }
+      }
+    ],
     "products": [
       {
         "name": "default",
@@ -9,7 +23,8 @@
         "runtimeOS": "HarmonyOS",
         "buildOption": {
           "strictMode": {
-            "caseSensitiveCheck": false
+            "caseSensitiveCheck": false,
+            "useNormalizedOHMUrl": true
           }
         },
         "targetSdkVersion": "6.1.1(24)"

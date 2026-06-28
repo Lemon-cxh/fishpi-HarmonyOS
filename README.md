@@ -7,6 +7,10 @@
 - 🔐 **登录/注册** - 账号密码登录，获取apiKey
 - 💬 **聊天室** - 实时公聊消息，WebSocket通信
 - 📝 **文章** - 浏览最近、热门、精华文章，查看文章详情，点赞评论
+  - 📄 富文本渲染：支持HTML标签解析，代码高亮，表格展示
+  - 📋 列表支持：无序列表(ul/ol)渲染，自动缩进排版
+  - 🖼️ 图片预览：点击图片全屏查看，支持手势缩放
+  - 📏 智能排版：段落间距优化，标题字号自适应
 - ✉️ **私聊** - 一对一私聊，实时消息收发
 - 👤 **个人中心** - 查看用户信息、活跃度、积分
 - 🌙 **清风明月** - 发布和浏览清风明月动态
@@ -62,7 +66,9 @@ entry/src/main/ets/
 │   ├── SettingsPage.ets          # 设置
 │   └── TransferPage.ets          # 积分转账
 ├── components/                   # 组件库
-│   └── DesignSystem.ets          # 鸿蒙设计系统组件
+│   ├── DesignSystem.ets          # 鸿蒙设计系统组件
+│   ├── RichTextView.ets          # 富文本渲染组件
+│   └── ImagePreviewDialog.ets    # 图片预览弹窗
 ├── model/                        # 数据模型
 │   ├── User.ets
 │   ├── Message.ets
@@ -80,7 +86,9 @@ entry/src/main/ets/
     ├── ThemeUtil.ets             # 主题管理
     ├── ResponsiveUtil.ets        # 响应式布局
     ├── ImmersiveUtil.ets         # 沉浸式
-    └── AnimationUtil.ets         # 动画
+    ├── AnimationUtil.ets         # 动画
+    ├── HtmlParser.ets            # HTML解析器
+    └── Models.ets                # 数据模型定义
 ```
 
 ## 技术实现
@@ -101,21 +109,3 @@ entry/src/main/ets/
 - HarmonyOS SDK API 10+
 - Node.js 16+
 
-## 运行说明
-
-1. 使用DevEco Studio打开项目
-2. 连接鸿蒙设备或启动模拟器
-3. 点击运行按钮启动应用
-
-## 设计规范
-
-详见：
-- [鸿蒙设计指南](docs/harmony-design-guide.md)
-- [鸿蒙特性实现](docs/harmony-features.md)
-- [功能计划](docs/feature-plan.md)
-
-## 相关链接
-
-- [摸鱼派官网](https://fishpi.cn)
-- [鸿蒙开发者文档](https://developer.huawei.com/consumer/cn/)
-- [HarmonyOS Design](https://developer.huawei.com/consumer/cn/doc/design-guides/)
