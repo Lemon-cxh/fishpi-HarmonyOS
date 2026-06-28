@@ -163,6 +163,9 @@ struct ArticleDetailPage {
       if (response.code === 0 && response.data) {
         const data = response.data;
         
+        // 调试日志：打印原始数据中的头像字段
+        hilog.info(0x0000, 'ArticleDetail', `Avatar fields: thumbnailURL48=${data.articleAuthorThumbnailURL48}, thumbnailURL210=${data.articleAuthorThumbnailURL210}, avatarURL=${data.articleAuthorAvatarURL}`);
+        
         // 处理可能的嵌套结构
         if (data.oId) {
           // 直接是文章对象
@@ -189,6 +192,8 @@ struct ArticleDetailPage {
             articleStick: data.articleStick || false,
             articlePerfect: data.articlePerfect || false
           };
+          
+          hilog.info(0x0000, 'ArticleDetail', `Final avatar URL: ${this.article.articleAuthorAvatarURL}`);
         } else if (data.article && data.article.oId) {
           // 嵌套结构 { article: {...} }
           this.article = data.article;
